@@ -12,26 +12,27 @@ body {
   margin: 0;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* ===== M0 验证台（参考保留） ===== */
+
 .shell {
   max-width: 980px;
   margin: 0 auto;
-  padding: 24px 20px 48px;
+  padding: 40px 20px 48px;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-header h1 {
+.shell h1 {
   font-size: 22px;
   margin: 0 0 4px;
   color: #0f766e;
-}
-
-.env {
-  margin: 0;
-  font-family: Consolas, monospace;
-  font-size: 12px;
-  color: #6b7280;
 }
 
 .panel {
@@ -47,11 +48,7 @@ header h1 {
   color: #374151;
 }
 
-.actions {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-}
+/* ===== 通用 ===== */
 
 button {
   font: inherit;
@@ -74,6 +71,15 @@ button:disabled {
   cursor: default;
 }
 
+button.primary {
+  background: #0f766e;
+  color: #fff;
+}
+
+button.primary:hover:not(:disabled) {
+  background: #0b5d57;
+}
+
 .hint {
   font-size: 12px;
   color: #9ca3af;
@@ -86,19 +92,13 @@ button:disabled {
   margin: 8px 0;
 }
 
-.editor-host {
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  overflow: hidden;
+.ok {
+  color: #047857;
 }
 
-.editor-host .cm-editor {
-  height: 280px;
-  font-size: 13px;
-}
-
-.editor-host .cm-scroller {
-  font-family: Consolas, "Microsoft YaHei", monospace;
+.bad {
+  color: #b91c1c;
+  font-weight: 600;
 }
 
 table {
@@ -127,16 +127,273 @@ th {
   white-space: nowrap;
 }
 
-.ok {
-  color: #047857;
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
-.bad {
+.view-switch {
+  position: fixed;
+  top: 8px;
+  right: 10px;
+  z-index: 50;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-color: #cbd5e1;
+  color: #64748b;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.view-switch:hover:not(:disabled) {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+/* ===== M1 编辑器 ===== */
+
+.m1-shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding-top: 0;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.brand {
+  font-weight: 700;
+  color: #0f766e;
+}
+
+.m1-tag {
+  font-size: 11px;
+  color: #94a3b8;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.file-path {
+  font-family: Consolas, monospace;
+  font-size: 13px;
+  color: #475569;
+  max-width: 46vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
+.banner-error {
+  background: #fef2f2;
   color: #b91c1c;
-  font-weight: 600;
+  border-bottom: 1px solid #fecaca;
 }
 
-footer.hint {
+.banner-warn {
+  background: #fffbeb;
+  color: #92400e;
+  border-bottom: 1px solid #fde68a;
+}
+
+.banner-note {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.welcome {
+  position: absolute;
+  inset: 0;
+  background: #f4f5f7;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #475569;
+  z-index: 5;
+}
+
+.welcome h2 {
+  margin: 0;
+}
+
+.welcome p {
+  max-width: 520px;
+  font-size: 13px;
+  color: #64748b;
   text-align: center;
-  margin-top: 8px;
+  line-height: 1.7;
+}
+
+.welcome code {
+  font-family: Consolas, monospace;
+  background: #eef2f7;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.editor-area {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.editor-shell {
+  flex: 1;
+  min-width: 0;
+  background: #fff;
+  overflow: hidden;
+}
+
+.editor-shell .cm-editor {
+  height: 100%;
+  font-size: 14px;
+}
+
+.editor-shell .cm-scroller {
+  font-family: Consolas, "Microsoft YaHei", monospace;
+  line-height: 1.7;
+}
+
+.editor-shell .cm-gutters {
+  border-right: 1px solid #eef2f7;
+  background: #fafbfc;
+}
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 5px 14px;
+  background: #fff;
+  border-top: 1px solid #e5e7eb;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.save-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #cbd5e1;
+}
+
+.save-clean {
+  background: #10b981;
+}
+
+.save-dirty {
+  background: #f59e0b;
+}
+
+.save-saving {
+  background: #3b82f6;
+}
+
+.save-conflict,
+.save-error {
+  background: #ef4444;
+}
+
+.toast {
+  position: fixed;
+  bottom: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1f2937;
+  color: #fff;
+  font-size: 13px;
+  padding: 8px 18px;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  z-index: 100;
+}
+
+/* ===== 模态框 ===== */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.modal {
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px 22px;
+  width: min(520px, 90vw);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+
+.modal h3 {
+  margin: 0 0 10px;
+  font-size: 16px;
+  color: #0f172a;
+}
+
+.modal p {
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.7;
+}
+
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.text-input {
+  width: 100%;
+  font: inherit;
+  font-family: Consolas, monospace;
+  font-size: 14px;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+}
+
+.text-input:focus {
+  outline: 2px solid #0f766e33;
+  border-color: #0f766e;
+}
+
+/* ===== M0 编辑器样例宿主 ===== */
+
+.editor-host {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.editor-host .cm-editor {
+  height: 280px;
+  font-size: 13px;
 }

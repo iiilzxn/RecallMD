@@ -1,36 +1,31 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { M1App } from "./ui/M1App";
 import { EditorPanel } from "./m0/EditorPanel";
 import { AstPanel } from "./m0/AstPanel";
 import { FsrsPanel } from "./m0/FsrsPanel";
 
-function App() {
-  const [versions, setVersions] = useState<{ rust: string; tauri: string } | null>(null);
-
-  useEffect(() => {
-    (async () => {
-      const { invoke } = await import("@tauri-apps/api/core");
-      try {
-        setVersions(await invoke<{ rust: string; tauri: string }>("m0_environment"));
-      } catch (e) {
-        setVersions({ rust: `IPC 失败: ${String(e)}`, tauri: "-" });
-      }
-    })();
-  }, []);
-
+function M0Console() {
   return (
     <main className="shell">
-      <header>
-        <h1>RecallMD · M0 技术基线验证台</h1>
-        <p className="env">
-          Rust {versions ? versions.rust : "…"} · Tauri {versions ? versions.tauri : "…"} · WebView
-          {navigator.userAgent.includes("Edg/") ? "2" : "?"}
-        </p>
-      </header>
+      <h1>RecallMD · M0 技术基线验证台</h1>
       <EditorPanel />
       <AstPanel />
       <FsrsPanel />
-      <footer className="hint">M0 只验证技术可行性，不含产品功能；结论记录于 docs/M0_NOTES.md</footer>
+      <footer className="hint">M0 已验收，结论见 docs/M0_NOTES.md；此页仅作参考保留</footer>
     </main>
+  );
+}
+
+function App() {
+  const [view, setView] = useState<"m1" | "m0">("m1");
+
+  return (
+    <>
+      <button className="view-switch" onClick={() => setView(view === "m1" ? "m0" : "m1")}>
+        {view === "m1" ? "M0 验证台 ↘" : "← 返回编辑器 (M1)"}
+      </button>
+      {view === "m1" ? <M1App /> : <M0Console />}
+    </>
   );
 }
 
