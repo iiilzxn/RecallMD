@@ -2,7 +2,7 @@
 
 日期：2026-09-07 · 执行：Claude（编码 Agent）· 对应设计文档 §18 M0
 
-状态：核心样例已通过自动化验证；WebView2 窗口人工验收与 NSIS 构建进行中（见文末待办）。
+状态：**M0 全部完成**（2026-09-07）。核心样例自动化验证通过；WebView2 人工验收与 NSIS 构建均已通过，验证结论见 §5。
 
 ## 1. 环境基线
 
@@ -98,8 +98,12 @@ Rust（src-tauri）：
 ## 5.1 待完成项
 
 - [x] WebView2 窗口人工验收（2026-09-07 用户确认：环境行、CM6 50k、Worker 700ms、fsrs、IME）
-- [ ] `tauri build` 产出 NSIS setup.exe，记录体积
-- [ ] git 首次提交（含两套 lockfile）
+- [x] `tauri build` 产出 NSIS setup.exe（2026-09-07）：`RecallMD_0.1.0_x64-setup.exe`，**1.6 MB**，SHA-256 `395392e119ce65dfa0fd578669d5150c3b0fb47c6c6bc26c3ae5d6b64e5dca9a`（bootstrapper 模式；M8 改 offlineInstaller 后体积将显著增大）
+- [x] git 首次提交（含两套 lockfile）
+
+### NSIS 工具链离线安装记录（网络受限环境）
+
+GitHub 直连超时导致 tauri-bundler 自动下载失败。处理：用户手动下载官方 `nsis-3.11.zip`（tauri-apps/binary-releases）与 `nsis_tauri_utils.dll`（v0.5.3），解压至 `%LOCALAPPDATA%\tauri\NSIS\`，DLL 放 **`Plugins\x86-unicode\additional\**` 子目录（bundler 源码 `NSIS_REQUIRED_FILES` 要求，漏掉 additional 会被整目录删除重建）。DLL SHA1 与 bundler 内置常量 `75197FEE…B860` 比对一致后才采用。
 
 ## 6. 后续里程碑输入
 
