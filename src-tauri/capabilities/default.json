@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "主窗口默认能力：仅开放核心事件，文件与数据库命令在后续里程碑按需加入",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

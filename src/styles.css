@@ -1,0 +1,142 @@
+:root {
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  color: #1f2933;
+  background: #f4f5f7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.shell {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+header h1 {
+  font-size: 22px;
+  margin: 0 0 4px;
+  color: #0f766e;
+}
+
+.env {
+  margin: 0;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.panel {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.panel h2 {
+  font-size: 15px;
+  margin: 0 0 12px;
+  color: #374151;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+button {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 14px;
+  border: 1px solid #0f766e;
+  border-radius: 6px;
+  background: #fff;
+  color: #0f766e;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #0f766e;
+  color: #fff;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.hint {
+  font-size: 12px;
+  color: #9ca3af;
+  margin: 4px 0 8px;
+}
+
+.stat {
+  font-family: Consolas, monospace;
+  font-size: 12.5px;
+  margin: 8px 0;
+}
+
+.editor-host {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.editor-host .cm-editor {
+  height: 280px;
+  font-size: 13px;
+}
+
+.editor-host .cm-scroller {
+  font-family: Consolas, "Microsoft YaHei", monospace;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12.5px;
+}
+
+th,
+td {
+  border: 1px solid #e5e7eb;
+  padding: 4px 8px;
+  text-align: left;
+}
+
+th {
+  background: #f9fafb;
+  font-weight: 600;
+}
+
+.title-cell {
+  font-family: Consolas, monospace;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ok {
+  color: #047857;
+}
+
+.bad {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+footer.hint {
+  text-align: center;
+  margin-top: 8px;
+}
