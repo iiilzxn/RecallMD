@@ -13,6 +13,10 @@ pub const UNSUPPORTED_ENCODING: &str = "UNSUPPORTED_ENCODING";
 pub const FILE_TOO_LARGE: &str = "FILE_TOO_LARGE";
 pub const VERIFY_FAILED: &str = "VERIFY_FAILED";
 pub const IO_ERROR: &str = "IO_ERROR";
+/// M2 新增：尚未打开/激活任何 Workspace（§14.1 表的扩展，记录于 M2_NOTES）
+pub const WORKSPACE_NOT_OPEN: &str = "WORKSPACE_NOT_OPEN";
+/// M2 新增：Workspace 已被其他实例锁定（§14.1 表的扩展，记录于 M2_NOTES）
+pub const WORKSPACE_LOCKED: &str = "WORKSPACE_LOCKED";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,6 +64,7 @@ pub type HostResult<T> = Result<T, HostError>;
 /// Windows 原生错误：5 拒绝访问、32 共享冲突（文件占用）、112 磁盘满。
 pub fn map_io_error(err: &std::io::Error, path: Option<String>) -> HostError {
     let code = match err.raw_os_error() {
+        Some(2) | Some(3) => FILE_NOT_FOUND,
         Some(5) => ACCESS_DENIED,
         Some(32) => FILE_BUSY,
         Some(112) => DISK_FULL,

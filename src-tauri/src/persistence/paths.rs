@@ -20,8 +20,10 @@ fn is_reserved_name(name: &str) -> bool {
     RESERVED.contains(&upper.as_str())
 }
 
-/// 校验用户相对路径并拆成组件。要求 `.md` 扩展（大小写不敏感）。
-pub fn validate_relative_path(relative: &str) -> HostResult<Vec<String>> {
+/// 词法校验相对路径并拆成组件（不限制扩展名，文件/目录通用）。
+/// 拒绝空段、`.`/`..`、反斜杠、绝对路径/盘符/ADS 冒号、结尾点/空格、
+/// Windows 保留名、首段 `.recallmd`。
+pub fn validate_entry_relative(relative: &str) -> HostResult<Vec<String>> {
     let rejected = |reason: &str| HostError::new(PATH_REJECTED, format!("路径被拒绝：{reason}"));
 
     if relative.is_empty() {
@@ -49,14 +51,28 @@ pub fn validate_relative_path(relative: &str) -> HostResult<Vec<String>> {
         }
         parts.push(seg.to_string());
     }
-    if parts[0] == RECALLMD_DIR {
+    if parts[0].eq_ignore_ascii_case(RECALLMD_DIR) {
         return Err(rejected("不能访问元数据目录 .recallmd"));
     }
+    Ok(parts)
+}
+
+/// 校验用户相对路径并拆成组件。要求 `.md` 扩展（大小写不敏感）。
+pub fn validate_relative_path(relative: &str) -> HostResult<Vec<String>> {
+    let parts = validate_entry_relative(relative)?;
     let file_name = parts.last().unwrap();
     if !file_name.to_ascii_lowercase().ends_with(".md") {
-        return Err(rejected("仅支持 .md 文件"));
+        return Err(HostError::new(
+            PATH_REJECTED,
+            "路径被拒绝：仅支持 .md 文件",
+        ));
     }
     Ok(parts)
+}
+
+/// 校验目录相对路径（目录树、新建目录、目录移动/删除用）。
+pub fn validate_dir_relative(relative: &str) -> HostResult<Vec<String>> {
+    validate_entry_relative(relative)
 }
 
 /// 解析并规范化根目录：必须存在、是目录、且不是符号链接/junction。

@@ -10,16 +10,16 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use windows::core::PCWSTR;
 use windows::Win32::Storage::FileSystem::{MoveFileExW, ReplaceFileW, MOVE_FILE_FLAGS, REPLACE_FILE_FLAGS};
 
 use super::error::*;
 use super::paths::*;
+use super::util::*;
 
 /// §15.2：50 MiB 以上本版只读
 pub const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
@@ -30,45 +30,6 @@ pub const HASH_ABSENT: &str = "ABSENT";
 fn save_queue() -> &'static Mutex<()> {
     static Q: OnceLock<Mutex<()>> = OnceLock::new();
     Q.get_or_init(|| Mutex::new(()))
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    let mut h = Sha256::new();
-    h.update(bytes);
-    let out = h.finalize();
-    let mut s = String::with_capacity(64);
-    for b in out {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
-}
-
-fn to_wide(p: &Path) -> Vec<u16> {
-    p.as_os_str()
-        .to_string_lossy()
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect()
-}
-
-/// 把 windows API 错误映射为 §14.1 错误码（HRESULT 低 16 位即 Win32 错误码）
-fn map_windows_error(err: &windows::core::Error, path: &Path) -> HostError {
-    let win32 = (err.code().0 as u32) & 0xFFFF;
-    let code = match win32 {
-        5 => ACCESS_DENIED,
-        32 => FILE_BUSY,
-        112 => DISK_FULL,
-        _ => IO_ERROR,
-    };
-    HostError::new(code, format!("Windows 错误 {win32}：{err}"))
-        .with_path(path.to_string_lossy().into_owned())
 }
 
 // ---------------------------------------------------------------------------
@@ -250,40 +211,6 @@ fn build_target_bytes(text: &str, eol: &str, add_bom: bool) -> HostResult<Vec<u8
     }
     bytes.extend_from_slice(body.as_bytes());
     Ok(bytes)
-}
-
-fn write_file_synced(path: &Path, bytes: &[u8]) -> HostResult<()> {
-    let mut f = File::create(path)
-        .map_err(|e| map_io_error(&e, Some(path.to_string_lossy().into_owned())))?;
-    f.write_all(bytes)
-        .map_err(|e| map_io_error(&e, Some(path.to_string_lossy().into_owned())))?;
-    f.sync_all()
-        .map_err(|e| map_io_error(&e, Some(path.to_string_lossy().into_owned())))?;
-    Ok(())
-}
-
-/// 临时文件 + rename 的原子小写入（用于操作日志等元数据）
-fn write_file_atomic(path: &Path, bytes: &[u8]) -> HostResult<()> {
-    let tmp = path.with_extension(format!("tmp-{}", Uuid::new_v4().simple()));
-    write_file_synced(&tmp, bytes)?;
-    // Windows 上 fs::rename 语义为 MoveFileEx(REPLACE_EXISTING)，目标存在则替换
-    fs::rename(&tmp, path)
-        .map_err(|e| map_io_error(&e, Some(path.to_string_lossy().into_owned())))?;
-    Ok(())
-}
-
-fn read_hash(path: &Path) -> HostResult<Option<String>> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(Some(sha256_hex(&bytes))),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(map_io_error(&e, Some(path.to_string_lossy().into_owned()))),
-    }
-}
-
-/// recovery 目录中的文件键：相对路径的稳定哈希
-fn recovery_key(relative: &str) -> String {
-    let norm = relative.replace('\\', "/").trim_start_matches('/').to_lowercase();
-    sha256_hex(norm.as_bytes())
 }
 
 #[derive(Debug, Serialize)]
