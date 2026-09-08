@@ -1,5 +1,6 @@
 // 类型化的原生命令客户端（设计 §6.1/§14.1）。
 // 所有命令失败时 reject HostError 形状的对象，不抛裸字符串。
+// M2 起：文档命令不再传 root，根由 Rust 激活 Workspace 解析（§6.3）。
 
 import { invoke } from "@tauri-apps/api/core";
 
@@ -55,7 +56,8 @@ function toHostError(e: unknown): HostErrorShape {
   return { code: "IPC_ERROR", message: String(e) };
 }
 
-async function call<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
+/** workspace/ipc.ts 共用的 invoke 包装：统一 HostError 形状 */
+export async function ipcCall<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
   try {
     return await invoke<T>(cmd, args);
   } catch (e) {
@@ -64,27 +66,24 @@ async function call<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
 }
 
 export const ipc = {
-  readDocument: (root: string, relativePath: string) =>
-    call<ReadDocumentDto>("m1_read_document", { root, relativePath }),
+  readDocument: (relativePath: string) =>
+    ipcCall<ReadDocumentDto>("read_document", { relativePath }),
 
-  saveDocument: (root: string, relativePath: string, params: SaveParams) =>
-    call<SaveDocumentDto>("m1_save_document", { root, relativePath, params }),
+  saveDocument: (relativePath: string, params: SaveParams) =>
+    ipcCall<SaveDocumentDto>("save_document", { relativePath, params }),
 
-  statDocument: (root: string, relativePath: string) =>
-    call<StatDocumentDto>("m1_stat_document", { root, relativePath }),
+  statDocument: (relativePath: string) =>
+    ipcCall<StatDocumentDto>("stat_document", { relativePath }),
 
-  draftRead: (root: string, relativePath: string) =>
-    call<DraftDto>("m1_draft_read", { root, relativePath }),
+  draftRead: (relativePath: string) => ipcCall<DraftDto>("draft_read", { relativePath }),
 
   draftWrite: (
-    root: string,
     relativePath: string,
     text: string,
     eol: "LF" | "CRLF",
     addBom: boolean,
     sourceHash: string,
-  ) => call<number>("m1_draft_write", { root, relativePath, text, eol, addBom, sourceHash }),
+  ) => ipcCall<number>("draft_write", { relativePath, text, eol, addBom, sourceHash }),
 
-  draftDiscard: (root: string, relativePath: string) =>
-    call<void>("m1_draft_discard", { root, relativePath }),
+  draftDiscard: (relativePath: string) => ipcCall<void>("draft_discard", { relativePath }),
 };

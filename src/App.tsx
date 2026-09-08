@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { M1App } from "./ui/M1App";
+import { M2App } from "./ui/M2App";
 import { EditorPanel } from "./m0/EditorPanel";
 import { AstPanel } from "./m0/AstPanel";
 import { FsrsPanel } from "./m0/FsrsPanel";
@@ -17,14 +17,14 @@ function M0Console() {
 }
 
 function App() {
-  const [view, setView] = useState<"m1" | "m0">("m1");
+  const [view, setView] = useState<"m2" | "m0">("m2");
 
   return (
     <>
-      <button className="view-switch" onClick={() => setView(view === "m1" ? "m0" : "m1")}>
-        {view === "m1" ? "M0 验证台 ↘" : "← 返回编辑器 (M1)"}
+      <button className="view-switch" onClick={() => setView(view === "m2" ? "m0" : "m2")}>
+        {view === "m2" ? "M0 验证台 ↘" : "← 返回应用 (M2)"}
       </button>
-      {view === "m1" ? <M1App /> : <M0Console />}
+      {view === "m2" ? <M2App /> : <M0Console />}
     </>
   );
 }

@@ -189,7 +189,6 @@ export class SaveCoordinator {
     try {
       // MIXED 时草稿按 LF 落盘（草稿只求内容不丢，不承担字节级还原）
       await ipc.draftWrite(
-        f.root,
         f.relative,
         this.getText(),
         this.eol === "CRLF" ? "CRLF" : "LF",
@@ -253,7 +252,7 @@ export class SaveCoordinator {
 
     const attempt = (async () => {
       try {
-        const result = await ipc.saveDocument(f.root, f.relative, {
+        const result = await ipc.saveDocument(f.relative, {
           text: snapshotText,
           eol,
           addBom,
@@ -305,7 +304,7 @@ export class SaveCoordinator {
   > {
     const f = this.openFile;
     if (!f || this.saveInFlight) return "none";
-    const st = await ipc.statDocument(f.root, f.relative);
+    const st = await ipc.statDocument(f.relative);
     const diskHash = st.exists ? st.rawByteHash : null;
     if (diskHash === this.baseHash) return "none";
 
@@ -321,7 +320,7 @@ export class SaveCoordinator {
 
     if (!this.isDirty()) {
       // 干净缓冲区：重载磁盘版（§13.4 第一行；撤销栈由 EditorController 重建）
-      const rd = await ipc.readDocument(f.root, f.relative);
+      const rd = await ipc.readDocument(f.relative);
       this.baseText = rd.text;
       this.baseHash = rd.rawByteHash;
       this.eol = rd.lineEnding;
@@ -347,7 +346,7 @@ export class SaveCoordinator {
     const f = this.openFile;
     if (!f) return;
     await this.writeDraftQuietly();
-    const rd = await ipc.readDocument(f.root, f.relative);
+    const rd = await ipc.readDocument(f.relative);
     this.baseText = rd.text;
     this.baseHash = rd.rawByteHash;
     this.eol = rd.lineEnding;
@@ -382,19 +381,27 @@ export class SaveCoordinator {
         message: "请先选择换行规范化风格再另存",
       } satisfies HostErrorShape;
     }
-    const result = await ipc.saveDocument(f.root, newRelativePath, {
+    const result = await ipc.saveDocument(newRelativePath, {
       text: this.getText(),
       eol,
       addBom,
       expectedHash: HASH_ABSENT,
     });
     // 旧文档的草稿清理并切换
-    await ipc.draftDiscard(f.root, f.relative).catch(() => {});
+    await ipc.draftDiscard(f.relative).catch(() => {});
     this.relativePath = newRelativePath;
     this.baseText = this.getText();
     this.baseHash = result.committedHash;
     this.emit({ status: "clean", lastError: null, conflictRemoteHash: null, lastSavedAtMs: Date.now() });
     onSwitch();
     return result;
+  }
+
+  /**
+   * 应用内移动/重命名成功后更新路径（M2 §13.6：文件字节未动，
+   * base 哈希不变；调用前必须已确认 buffer 干净）。
+   */
+  repath(newRelativePath: string) {
+    this.relativePath = newRelativePath;
   }
 }
