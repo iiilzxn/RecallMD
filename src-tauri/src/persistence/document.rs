@@ -5,11 +5,12 @@
 //! → 回读校验 → 清理。任一步失败都保证：原文不被半成品覆盖、
 //! 候选与旧版至少一份留存在 `.recallmd/recovery`。
 
+use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
@@ -26,10 +27,19 @@ pub const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
 /// 新文件/目标缺失场景的 expected_hash 哨兵
 pub const HASH_ABSENT: &str = "ABSENT";
 
-/// M1 全局保存串行队列（单文件里程碑足够；按路径分队列在 M4 引入）
-fn save_queue() -> &'static Mutex<()> {
-    static Q: OnceLock<Mutex<()>> = OnceLock::new();
-    Q.get_or_init(|| Mutex::new(()))
+/// M4：按路径的保存串行队列（M1 全局队列升级）。同一文件保存串行（expectedHash
+/// CAS 顺序不被并发写打乱），不同文件互不阻塞（§15.2 交互预算）。
+/// 队列条目常驻（每个路径一把 0 字节锁，库规模下可忽略）。
+fn save_queue_for(key: &str) -> HostResult<Arc<Mutex<()>>> {
+    static QUEUES: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+    let map = QUEUES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = map
+        .lock()
+        .map_err(|_| HostError::new(IO_ERROR, "保存队列锁中毒"))?;
+    Ok(guard
+        .entry(key.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone())
 }
 
 // ---------------------------------------------------------------------------
@@ -235,10 +245,6 @@ pub fn save_document(
     relative: &str,
     params: SaveDocumentParams,
 ) -> HostResult<SaveDocumentResult> {
-    let _guard = save_queue()
-        .lock()
-        .map_err(|_| HostError::new(IO_ERROR, "保存队列锁中毒"))?;
-
     let op_id = Uuid::new_v4().to_string();
     let op_short = &op_id[..8];
     let root_canon = resolve_root(root)?;
@@ -255,6 +261,11 @@ pub fn save_document(
     let recovery_dir = recallmd_sub(&root_canon, "recovery")?;
     let ops_dir = recallmd_sub(&root_canon, "operations")?;
     let key = recovery_key(relative);
+    // 同路径串行：队列锁须在触碰任何恢复材料/临时文件之前取得
+    let queue = save_queue_for(&key)?;
+    let _guard = queue
+        .lock()
+        .map_err(|_| HostError::new(IO_ERROR, "保存队列锁中毒"))?;
     let base_path = recovery_dir.join(format!("{key}.base.md"));
     let candidate_path = recovery_dir.join(format!("{key}.candidate.md"));
     let backup_path = recovery_dir.join(format!("{key}.backup.md"));

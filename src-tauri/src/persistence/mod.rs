@@ -5,5 +5,6 @@ pub mod document;
 pub mod error;
 pub mod paths;
 pub mod recent;
+pub mod store;
 pub mod util;
 pub mod workspace;

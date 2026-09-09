@@ -17,12 +17,28 @@ pub const IO_ERROR: &str = "IO_ERROR";
 pub const WORKSPACE_NOT_OPEN: &str = "WORKSPACE_NOT_OPEN";
 /// M2 新增：Workspace 已被其他实例锁定（§14.1 表的扩展，记录于 M2_NOTES）
 pub const WORKSPACE_LOCKED: &str = "WORKSPACE_LOCKED";
+/// M4 新增：索引提交校验失败（§14.1 表；正文已保存，复习索引待修复）
+pub const INDEX_FAILED: &str = "INDEX_FAILED";
+/// M4 新增：数据库忙，可重试（§14.1 表；同 request_id 有界重试）
+pub const DB_BUSY: &str = "DB_BUSY";
+/// M4 新增：数据库损坏，需恢复（§14.1 表；隔离库和 WAL，停止元数据写）
+pub const DB_CORRUPT: &str = "DB_CORRUPT";
+/// M4 新增：迁移失败或库由更新版本创建（§14.1 表；只读打开正文）
+pub const MIGRATION_FAILED: &str = "MIGRATION_FAILED";
+/// M4 新增：ID 重复/位置异常（§14.1 表；冻结相关身份，提供逐项修复）
+pub const IDENTITY_CONFLICT: &str = "IDENTITY_CONFLICT";
+/// M4 新增：元数据层离线（§14.1 WORKSPACE_OFFLINE；正文仍可只读/编辑）
+pub const WORKSPACE_OFFLINE: &str = "WORKSPACE_OFFLINE";
+/// M4 新增：索引 CAS 失败——expectedIndexRevision 与当前不符（先例：WORKSPACE_NOT_OPEN）
+pub const STALE_INDEX: &str = "STALE_INDEX";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostError {
     pub code: String,
     pub message: String,
+    /// §14.1：调用方可否安全重试（M4 起；目前仅 DB_BUSY 为 true）
+    pub retryable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -34,6 +50,7 @@ impl HostError {
         Self {
             code: code.to_string(),
             message: message.into(),
+            retryable: false,
             operation_id: None,
             path: None,
         }
@@ -46,6 +63,12 @@ impl HostError {
 
     pub fn with_op(mut self, op: impl Into<String>) -> Self {
         self.operation_id = Some(op.into());
+        self
+    }
+
+    /// 标记该错误可安全重试（§14.1 retryable）
+    pub fn retryable(mut self) -> Self {
+        self.retryable = true;
         self
     }
 }
