@@ -1,12 +1,15 @@
 // M2 应用壳：Workspace 管理 + 目录树 + 文件操作 + 安全编辑器
 // （设计 §5.1/§13.6/§16；M1 编辑协议原样复用）。
+// M3：Block Engine 接线——保存流锚点插入桥、纳入复习动作、状态栏块计数、
+// 500ms 防抖的已保存版本分析（§15.2）。
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ipc, type DraftDto, type HostErrorShape } from "../editor/ipc";
 import { SaveCoordinator, type CoordinatorState } from "../editor/SaveCoordinator";
-import { EditorController, type CursorInfo } from "../editor/EditorController";
+import { EditorController, type CursorInfo, type SystemEdit } from "../editor/EditorController";
+import { EngineClient } from "../engine/workerClient";
 import {
   workspaceIpc,
   type DeletePreviewDto,
@@ -56,6 +59,9 @@ function suggestRestorePath(rel: string, isFile: boolean): string {
   }
   return `${rel} (2)`;
 }
+
+/** 状态栏的引擎扫描摘要（§15.2：仅对已保存版本分析）。 */
+type EngineUi = { blocks: number; anchored: number; conflicts: number };
 
 export function M2App() {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -115,6 +121,18 @@ export function M2App() {
   const [switchGuard, setSwitchGuard] = useState(false);
   const pendingActionRef = useRef<PendingAction | null>(null);
 
+  // --- M3：Block Engine ---
+  const [engineUi, setEngineUi] = useState<EngineUi | null>(null);
+  const [engineDead, setEngineDead] = useState(false);
+  const engineRef = useRef<EngineClient | null>(null);
+  /** “纳入复习”一次性授权（§9.2 L312：明确纳入操作才给未纳入文件插锚）。 */
+  const includeOnceRef = useRef(false);
+  /** 最近一次保存流实际插入的锚点数（toast 展示后清零）。 */
+  const lastInsertedRef = useRef(0);
+  /** 保存流是否消费了 includeOnce（用于“无需插入”反馈）。 */
+  const includeConsumedRef = useRef(false);
+  const scanTimerRef = useRef<number | null>(null);
+
   const showToast = useCallback((msg: string) => setToast(msg), []);
 
   useEffect(() => {
@@ -139,16 +157,86 @@ export function M2App() {
       editor.mount(hostRef.current);
       coord.attach(() => editor.getText());
     }
+
+    // M3：引擎 Worker 与保存流锚点插入桥（§13.1 L821–823）
+    const engine = new EngineClient();
+    engineRef.current = engine;
+    if (engine.dead) setEngineDead(true);
+    coord.attachAnchor({
+      planForSave: async (text, _trigger, info) => {
+        const ed = editorRef.current;
+        const f = coord.openFile;
+        if (!ed || !f || engine.dead) return null;
+        if (ed.isComposing()) return null; // IME 组合期不写注释（§13.1 L810）
+        const includeOnce = includeOnceRef.current;
+        includeOnceRef.current = false;
+        // 门控 1：无内容改动的 Ctrl+S 不触发旧库纳入（§9.2 L312）
+        if (!info.hadChanges && !includeOnce) return null;
+        // ★ 基线必须在 await 之前建立：等待期输入经 ChangeSet 映射合并（M3 风险 #10）
+        ed.markBaseline(text);
+        let plan: { edits: SystemEdit[] } | null = null;
+        try {
+          const report = await engine.analyze(
+            { relativePath: f.relative, text, rawByteHash: coord.getBaseHash() ?? "" },
+            { insertionPolicy: "missing" },
+          );
+          // 门控 2：未纳入文件只在显式“纳入复习”时一次性插入
+          const enrolled = report.blocks.some((b) => b.blockId);
+          if (includeOnce || enrolled) {
+            includeConsumedRef.current = includeOnce;
+            // 门控 3：Git 冲突或身份诊断未解决时不插（§8.3 L285、§9.4 L360 人工修复）
+            if (
+              report.indexable &&
+              !report.diagnostics.some((d) => d.code.startsWith("ID_")) &&
+              report.insertionPlan.length > 0
+            ) {
+              lastInsertedRef.current = report.insertionPlan.length;
+              plan = {
+                edits: report.insertionPlan.map((e) => ({
+                  from: e.insertOffset,
+                  to: e.insertOffset,
+                  insert: e.text,
+                  contextBefore: e.contextBefore,
+                  contextAfter: e.contextAfter,
+                })),
+              };
+            }
+          }
+        } catch {
+          plan = null; // 引擎/Worker 故障：本轮不插
+        }
+        // plan 为 null 的所有路径统一清基线；非 null 由 applySystemEdits/applyEdits 清理
+        if (!plan) ed.clearBaseline();
+        return plan;
+      },
+      applyEdits: (edits) => {
+        const ed = editorRef.current;
+        const ok = ed ? ed.applySystemEdits(edits) : false;
+        if (!ok) ed?.clearBaseline();
+        return ok;
+      },
+      onSkipped: (reason) => {
+        showToast(
+          reason === "composing"
+            ? "输入法组合中，本次保存未插入锚点"
+            : "缓冲区已变化，锚点插入被跳过（已按原样保存）",
+        );
+      },
+    });
+
     const unsub = coord.onStateChange((s) => {
       setCoordState(s);
       if (s.status === "conflict") setConflictOpen(true);
     });
     return () => {
       unsub();
+      if (scanTimerRef.current) window.clearTimeout(scanTimerRef.current);
+      engine.dispose();
       editor.destroy();
       coord.close();
       editorRef.current = null;
       coordRef.current = null;
+      engineRef.current = null;
     };
   }, []);
 
@@ -407,13 +495,19 @@ export function M2App() {
     };
   }, []);
 
-  // --- 保存（沿用 M1） ---
+  // --- 保存（沿用 M1；M3 增锚点插入反馈） ---
   const handleSave = useCallback(async () => {
     const coord = coordRef.current;
     if (!coord || !coord.openFile) return;
     try {
       const r = await coord.saveNow("manual");
-      showToast(`已保存 · ${r.byteSize.toLocaleString()} 字节`);
+      const inserted = lastInsertedRef.current;
+      const includeUsed = includeConsumedRef.current;
+      lastInsertedRef.current = 0;
+      includeConsumedRef.current = false;
+      if (inserted > 0) showToast(`已插入 ${inserted} 个锚点并保存 · ${r.byteSize.toLocaleString()} 字节`);
+      else if (includeUsed) showToast("没有需要锚定的新块，已保存");
+      else showToast(`已保存 · ${r.byteSize.toLocaleString()} 字节`);
     } catch (e) {
       const err = e as HostErrorShape;
       if (err.code !== "FILE_CONFLICT") showToast(`保存失败：${err.message}`);
@@ -421,6 +515,58 @@ export function M2App() {
   }, [showToast]);
   const handleSaveRef = useRef(handleSave);
   handleSaveRef.current = handleSave;
+
+  // --- M3：纳入复习（§9.2 L312 明确纳入操作） ---
+  const handleInclude = useCallback(async () => {
+    const coord = coordRef.current;
+    if (!coord || !coord.openFile) return;
+    if (coord.getState().status === "conflict") {
+      showToast("存在未处理冲突，先解决后再纳入复习");
+      return;
+    }
+    includeOnceRef.current = true;
+    await handleSaveRef.current?.();
+  }, [showToast]);
+
+  // --- M3：已保存版本的防抖分析（§15.2：500ms、过时结果按 revision 丢弃） ---
+  const scheduleEngineScan = useCallback(() => {
+    if (scanTimerRef.current) window.clearTimeout(scanTimerRef.current);
+    scanTimerRef.current = window.setTimeout(() => {
+      scanTimerRef.current = null;
+      const coord = coordRef.current;
+      const ed = editorRef.current;
+      const engine = engineRef.current;
+      const f = coord?.openFile;
+      if (!coord || !ed || !engine || !f || engine.dead) return;
+      if (coord.getState().status !== "clean") return; // 只分析已保存版本
+      const text = ed.getText();
+      const revision = coord.getBaseHash() ?? "";
+      engine
+        .analyze({ relativePath: f.relative, text, rawByteHash: revision })
+        .then((rep) => {
+          if (rep.revision !== (coordRef.current?.getBaseHash() ?? "")) return; // 过时丢弃
+          setEngineUi({
+            blocks: rep.blocks.length,
+            anchored: rep.blocks.filter((b) => b.blockId).length,
+            conflicts: rep.diagnostics.filter((d) => d.code.startsWith("ID_")).length,
+          });
+        })
+        .catch(() => setEngineDead(true));
+    }, 500);
+  }, []);
+
+  useEffect(() => {
+    if (coordState?.status === "clean") scheduleEngineScan();
+    if (coordState?.status === "idle" && scanTimerRef.current) {
+      window.clearTimeout(scanTimerRef.current);
+      scanTimerRef.current = null;
+    }
+  }, [coordState, scheduleEngineScan]);
+
+  // 文件关闭/切换时清摘要
+  useEffect(() => {
+    if (!fileInfo) setEngineUi(null);
+  }, [fileInfo]);
 
   // --- 外部变更 + 基础目录核对：窗口聚焦（§13.3 M2 简化） ---
   useEffect(() => {
@@ -844,6 +990,13 @@ export function M2App() {
           </span>
           <span className="spacer" />
           <button
+            disabled={!fileInfo || engineDead || status === "conflict"}
+            title="为当前文件的复习块插入 ID 锚点并保存"
+            onClick={() => void handleInclude()}
+          >
+            纳入复习
+          </button>
+          <button
             disabled={!canEdit || status === "saving"}
             onClick={() => void handleSave()}
           >
@@ -887,6 +1040,15 @@ export function M2App() {
           <span className={status === "error" || status === "conflict" ? "bad" : ""}>
             {statusText[status]}
           </span>
+          {fileInfo && (
+            <span className={engineUi?.conflicts ? "bad" : ""}>
+              {engineDead
+                ? "引擎不可用"
+                : engineUi
+                  ? `${engineUi.blocks} 块 · ${engineUi.anchored} 已锚定${engineUi.conflicts ? ` · ${engineUi.conflicts} 身份冲突` : ""}`
+                  : "扫描中…"}
+            </span>
+          )}
           <span className="spacer" />
           <span>UTF-8{hasBom ? " · BOM" : ""}</span>
           <span>{eolState}</span>

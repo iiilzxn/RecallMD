@@ -16,8 +16,12 @@ export interface AnchorPlan {
 }
 
 export interface AnchorBridge {
-  /** 返回 null = 本轮跳过（未纳入/无新块/有冲突诊断等门控由 bridge 决定）。 */
-  planForSave(text: string, trigger: "manual" | "auto"): Promise<AnchorPlan | null>;
+  /**
+   * 返回 null = 本轮跳过（未纳入/无新块/有冲突诊断等门控由 bridge 决定）。
+   * hadChanges = 发起保存时 buffer 是否有未保存修改（无内容改动的 Ctrl+S 不触发旧库
+   * 纳入，§9.2 L312）。
+   */
+  planForSave(text: string, trigger: "manual" | "auto", info: { hadChanges: boolean }): Promise<AnchorPlan | null>;
   /** 绑定 EditorController.applySystemEdits；false = 不可安全应用。 */
   applyEdits(edits: SystemEdit[]): boolean;
   onSkipped?(reason: "unsafe" | "composing"): void;
@@ -266,6 +270,8 @@ export class SaveCoordinator {
       this.emit({ status: "error", lastError: err });
       throw err;
     }
+    // 锚点门控依据在进入 saving 前捕获（emit 后 isDirty 恒 false）
+    const hadChanges = this.isDirty() || this.pendingSave;
     if (this.state.status !== "saving") {
       this.emit({ status: "saving", lastError: null });
     }
@@ -277,7 +283,7 @@ export class SaveCoordinator {
         // bridge 自己负责在 await 分析之前 markBaseline（等待期输入经 ChangeSet 映射合并）。
         if (this.anchorBridge && !this.composing) {
           try {
-            const plan = await this.anchorBridge.planForSave(this.getText(), trigger);
+            const plan = await this.anchorBridge.planForSave(this.getText(), trigger, { hadChanges });
             if (plan && plan.edits.length > 0) {
               const applied = this.anchorBridge.applyEdits(plan.edits);
               if (!applied) {
