@@ -140,6 +140,20 @@ function judgeRegistered(
   };
 
   if (conflictIds.has(prev.blockId)) {
+    // M4：已删除块不进入冲突裁决（Rust 侧拒绝 DELETED→ID_CONFLICT）；
+    // 多处重现交由修复面板按 ID_DUPLICATED 诊断处理
+    if (prev.status === "DELETED") {
+      return {
+        ...base,
+        action: "NOOP",
+        status: "DELETED",
+        relativePath: prev.relativePath,
+        next: null,
+        changeClass: null,
+        needsRecheck: false,
+        reason: "已删除块多处重现：保持 DELETED，交显式修复",
+      };
+    }
     return {
       ...base,
       action: "MARK_CONFLICT",
@@ -153,6 +167,20 @@ function judgeRegistered(
   }
 
   if (occs.length > 1) {
+    // M4：已删除块多处重现不进冲突裁决（Rust 侧拒绝 DELETED→ID_CONFLICT），
+    // 交修复面板按 ID_DUPLICATED 诊断处理
+    if (prev.status === "DELETED") {
+      return {
+        ...base,
+        action: "NOOP",
+        status: "DELETED",
+        relativePath: prev.relativePath,
+        next: null,
+        changeClass: null,
+        needsRecheck: false,
+        reason: "已删除块多处重现：保持 DELETED，交显式修复",
+      };
+    }
     return {
       ...base,
       action: "MARK_CONFLICT",
@@ -179,6 +207,19 @@ function judgeRegistered(
         reason: "旧持有文件不在快照集合：无法核实消失，本轮不下结论",
       };
     }
+    // M4：用户删除的块不降级 MISSING——未重现即保持 DELETED（零写入）
+    if (prev.status === "DELETED") {
+      return {
+        ...base,
+        action: "NOOP",
+        status: "DELETED",
+        relativePath: prev.relativePath,
+        next: null,
+        changeClass: null,
+        needsRecheck: false,
+        reason: "已删除块未重现：保持 DELETED（不降级 MISSING）",
+      };
+    }
     const wasMissing = prev.status === "MISSING";
     return {
       ...base,
@@ -188,7 +229,7 @@ function judgeRegistered(
       next: null,
       changeClass: null,
       needsRecheck: false,
-      reason: wasMissing ? "仍缺失：等待 M4 稳定确认后晋升 DELETED" : "首次消失（剪切未粘贴/删除同型）",
+      reason: wasMissing ? "仍缺失：等待稳定确认后晋升 DELETED" : "首次消失（剪切未粘贴/删除同型）",
     };
   }
 
@@ -244,7 +285,7 @@ function judgeRegistered(
   });
   const delta: 0 | 1 = nextBlock.bodyHash !== prev.bodyHash ? 1 : 0;
   const needsRecheck = changeClass === "CONTENT_REVIEWED" || changeClass === "CONTENT_PAUSED";
-  const restored = prev.status === "MISSING";
+  const restored = prev.status === "MISSING" || prev.status === "DELETED";
   const action = restored
     ? "RESTORE"
     : changeClass === "AST_IDENTICAL"

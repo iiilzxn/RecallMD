@@ -7,6 +7,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ipc, type DraftDto, type HostErrorShape } from "../editor/ipc";
+import { indexIpc, type AnchorRepairOp, type RegistrySnapshot } from "../index/ipc";
+import { runIndexSync, runStartupSync, summarize, type SyncSummary } from "../index/sync";
 import { SaveCoordinator, type CoordinatorState } from "../editor/SaveCoordinator";
 import { EditorController, type CursorInfo, type SystemEdit } from "../editor/EditorController";
 import { EngineClient } from "../engine/workerClient";
@@ -58,6 +60,41 @@ function suggestRestorePath(rel: string, isFile: boolean): string {
     return `${rel.slice(0, -3)} (2).md`;
   }
   return `${rel} (2)`;
+}
+
+/** 修复面板：缺失旧 ID 的恢复行（行号输入 + 恢复按钮） */
+function MissingIdRow({
+  blockId,
+  title,
+  relativePath,
+  disabled,
+  onRestore,
+}: {
+  blockId: string;
+  title: string | null;
+  relativePath: string;
+  disabled: boolean;
+  onRestore: (lineIndex: number) => void;
+}) {
+  const [line, setLine] = useState("0");
+  return (
+    <li>
+      <span className="mono">{blockId}</span>
+      <span>
+        {title ?? "（无标题）"} @ {relativePath}
+      </span>
+      <input
+        type="number"
+        min={0}
+        value={line}
+        onChange={(e) => setLine(e.target.value)}
+        style={{ width: "5em" }}
+      />
+      <button disabled={disabled} onClick={() => onRestore(Number(line) || 0)}>
+        恢复此 ID
+      </button>
+    </li>
+  );
 }
 
 /** 状态栏的引擎扫描摘要（§15.2：仅对已保存版本分析）。 */
@@ -132,6 +169,20 @@ export function M2App() {
   /** 保存流是否消费了 includeOnce（用于“无需插入”反馈）。 */
   const includeConsumedRef = useRef(false);
   const scanTimerRef = useRef<number | null>(null);
+
+  // --- M4：索引同步、恢复模式、冲突修复 ---
+  const [syncSummary, setSyncSummary] = useState<SyncSummary | null>(null);
+  const [recoveryMode, setRecoveryMode] = useState<string | null>(null);
+  const [repairOpen, setRepairOpen] = useState(false);
+  const [repairBusy, setRepairBusy] = useState(false);
+  /** 最近一次保存的 operationId：索引事务确认（index_complete）后清空 */
+  const lastOpRef = useRef<string | null>(null);
+  /** 最近一次扫描的身份诊断（修复面板数据源，§9.4 L354–360） */
+  const [idDiags, setIdDiags] = useState<
+    { code: string; blockId: string | null; startOffset: number }[]
+  >([]);
+  /** 最近注册表快照（修复面板 MISSING 列表来源） */
+  const lastRegistryRef = useRef<RegistrySnapshot | null>(null);
 
   const showToast = useCallback((msg: string) => setToast(msg), []);
 
@@ -501,6 +552,7 @@ export function M2App() {
     if (!coord || !coord.openFile) return;
     try {
       const r = await coord.saveNow("manual");
+      lastOpRef.current = r.operationId; // 索引事务确认后由扫描流消费（§13.2 L847）
       const inserted = lastInsertedRef.current;
       const includeUsed = includeConsumedRef.current;
       lastInsertedRef.current = 0;
@@ -550,6 +602,32 @@ export function M2App() {
             anchored: rep.blocks.filter((b) => b.blockId).length,
             conflicts: rep.diagnostics.filter((d) => d.code.startsWith("ID_")).length,
           });
+          setIdDiags(
+            rep.diagnostics
+              .filter((d) => d.code.startsWith("ID_"))
+              .map((d) => ({ code: d.code, blockId: d.blockId, startOffset: d.startOffset })),
+          );
+          // M4：reconcile → commit_index_batch（首个生产调用方，§13.1 L823）
+          void (async () => {
+            try {
+              const res = await runIndexSync(engine, [f.relative]);
+              lastRegistryRef.current = res.registry;
+              setSyncSummary(summarize(res.registry));
+              const op = lastOpRef.current;
+              if (op) {
+                lastOpRef.current = null;
+                await indexIpc.indexComplete(op); // INDEX_COMMITTED 后清理操作日志
+              }
+            } catch (e) {
+              const err = e as HostErrorShape;
+              if (err.code === "WORKSPACE_OFFLINE" || err.code === "MIGRATION_FAILED") {
+                setRecoveryMode("OFFLINE");
+                return;
+              }
+              // INDEX_FAILED 语义：正文已保存，索引待修复；阅读编辑不受阻（§14.1）
+              showToast(`正文已保存，复习索引待修复：${err.message}`);
+            }
+          })();
         })
         .catch(() => setEngineDead(true));
     }, 500);
@@ -567,6 +645,54 @@ export function M2App() {
   useEffect(() => {
     if (!fileInfo) setEngineUi(null);
   }, [fileInfo]);
+
+  // --- M4：启动收敛（§14.3 步 5：stale/未登记文件分批重索引） ---
+  useEffect(() => {
+    if (!wsInfo) return;
+    const engine = engineRef.current;
+    if (!engine || engine.dead) return;
+    let cancelled = false;
+    void runStartupSync(engine)
+      .then((r) => {
+        if (cancelled) return;
+        setSyncSummary(r.summary);
+        setRecoveryMode(r.recoveryMode);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        const err = e as HostErrorShape;
+        if (err.code === "WORKSPACE_OFFLINE" || err.code === "MIGRATION_FAILED") {
+          setRecoveryMode("OFFLINE");
+        } else {
+          showToast(`启动索引同步未完成：${err.message}`);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [wsInfo, showToast]);
+
+  // --- M4：锚点修复（§9.4 L354–360 显式操作；preview→apply 走安全保存） ---
+  const applyRepair = useCallback(
+    async (op: AnchorRepairOp) => {
+      setRepairBusy(true);
+      try {
+        const preview = await indexIpc.anchorRepairPreview(op);
+        const r = await indexIpc.anchorRepairApply(op, preview.newBlockId ?? undefined);
+        lastOpRef.current = r.operationId;
+        setRepairOpen(false);
+        showToast("已按预览修复并保存，索引将自动同步");
+        scheduleEngineScan(); // 触发重扫 → reconcile 收敛身份状态
+      } catch (e) {
+        showToast(`修复失败：${(e as HostErrorShape).message}`);
+      } finally {
+        setRepairBusy(false);
+      }
+    },
+    [showToast, scheduleEngineScan],
+  );
+  const applyRepairRef = useRef(applyRepair);
+  applyRepairRef.current = applyRepair;
 
   // --- 外部变更 + 基础目录核对：窗口聚焦（§13.3 M2 简化） ---
   useEffect(() => {
@@ -1035,18 +1161,66 @@ export function M2App() {
           )}
         </div>
 
+        {recoveryMode && recoveryMode !== "CLEARED" && (
+          <div className={`recover-banner ${recoveryMode === "OFFLINE" ? "bad" : ""}`}>
+            {recoveryMode === "OFFLINE" ? (
+              <span>
+                学习记录暂不可用（元数据库离线）：正文读写不受影响，评分暂停。请升级应用或从备份恢复。
+              </span>
+            ) : (
+              <>
+                <span>
+                  学习历史丢失（{recoveryMode === "REBUILT_NO_HISTORY" ? "数据库被删除" : "数据库损坏已隔离"}），
+                  已从正文重建的块处于<b>暂停</b>状态，不会自动进入复习（§12.6）。
+                </span>
+                <button
+                  disabled={repairBusy}
+                  onClick={() => {
+                    setRepairBusy(true);
+                    void indexIpc
+                      .enableRecoveredBlocks()
+                      .then((n) => {
+                        setRecoveryMode(null);
+                        showToast(`已启用 ${n} 个重建块，从现在重新开始`);
+                      })
+                      .catch((e) => showToast(`启用失败：${(e as HostErrorShape).message}`))
+                      .finally(() => setRepairBusy(false));
+                  }}
+                >
+                  从现在重新开始
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         <footer className="statusbar">
           <span className={`save-dot save-${status}`} />
           <span className={status === "error" || status === "conflict" ? "bad" : ""}>
             {statusText[status]}
           </span>
           {fileInfo && (
-            <span className={engineUi?.conflicts ? "bad" : ""}>
+            <span
+              className={engineUi?.conflicts ? "bad clickable" : ""}
+              onClick={() => engineUi?.conflicts && setRepairOpen(true)}
+            >
               {engineDead
                 ? "引擎不可用"
                 : engineUi
                   ? `${engineUi.blocks} 块 · ${engineUi.anchored} 已锚定${engineUi.conflicts ? ` · ${engineUi.conflicts} 身份冲突` : ""}`
                   : "扫描中…"}
+            </span>
+          )}
+          {syncSummary && (
+            <span
+              className={syncSummary.conflict || syncSummary.pendingDocs ? "bad clickable" : "clickable"}
+              onClick={() => setRepairOpen(true)}
+              title="库级索引状态（点击打开身份修复）"
+            >
+              索引 {syncSummary.active} 活跃
+              {syncSummary.missing ? ` · ${syncSummary.missing} 缺失` : ""}
+              {syncSummary.conflict ? ` · ${syncSummary.conflict} 冲突` : ""}
+              {syncSummary.pendingDocs ? ` · ${syncSummary.pendingDocs} 待同步` : ""}
             </span>
           )}
           <span className="spacer" />
@@ -1060,6 +1234,94 @@ export function M2App() {
           </span>
         </footer>
       </div>
+
+      {/* M4：身份冲突修复面板（§9.4 L354–360 显式操作） */}
+      {repairOpen && (
+        <Modal title="身份修复（显式操作，保存前可见差异语义）">
+          <p className="hint">
+            每个操作只改动选定的锚点行，其余内容原样保存；修复后引擎重扫自动收敛身份状态。
+          </p>
+          {idDiags.length === 0 && (
+            <p>当前文件没有身份诊断。库级状态见状态栏（缺失的旧 ID 可在下方恢复）。</p>
+          )}
+          <ul className="repair-list">
+            {idDiags.map((d, i) => (
+              <li key={`${d.code}-${d.blockId}-${d.startOffset}-${i}`}>
+                <code>{d.code}</code>
+                <span className="mono">{d.blockId ?? "（无 ID）"}</span>
+                {d.blockId && (d.code === "ID_DUPLICATED" || d.code === "ID_EXTRA") && (
+                  <button
+                    disabled={repairBusy}
+                    onClick={() =>
+                      void applyRepairRef.current({
+                        kind: "DuplicateRekey",
+                        relativePath: fileInfo?.relative ?? "",
+                        blockId: d.blockId!,
+                        expectedHash: coordRef.current?.getBaseHash() ?? "",
+                      })
+                    }
+                  >
+                    此处是副本：生成新 ID
+                  </button>
+                )}
+                {d.blockId && (d.code === "ID_MISPLACED" || d.code === "ID_MALFORMED") && (
+                  <button
+                    disabled={repairBusy}
+                    onClick={() =>
+                      void applyRepairRef.current({
+                        kind: "MisplacedRemove",
+                        relativePath: fileInfo?.relative ?? "",
+                        blockId: d.blockId!,
+                        expectedHash: coordRef.current?.getBaseHash() ?? "",
+                      })
+                    }
+                  >
+                    删除该注释行
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          {(() => {
+            const missing = (lastRegistryRef.current?.blocks ?? [])
+              .filter((b) => b.status === "MISSING")
+              .slice(0, 20);
+            if (missing.length === 0) return null;
+            return (
+              <div className="repair-missing">
+                <h4>缺失的旧 ID（可恢复原历史，§9.4 L357）</h4>
+                <ul className="repair-list">
+                  {missing.map((b) => (
+                    <MissingIdRow
+                      key={b.blockId}
+                  blockId={b.blockId}
+                  title={b.title}
+                  relativePath={b.relativePath}
+                  disabled={repairBusy}
+                  onRestore={(line) =>
+                    void applyRepairRef.current({
+                      kind: "MissingReinsert",
+                      relativePath: b.relativePath,
+                      blockId: b.blockId,
+                      lineIndex: line,
+                      expectedHash:
+                        b.relativePath === fileInfo?.relative
+                          ? coordRef.current?.getBaseHash() ?? ""
+                          : "",
+                    })
+                  }
+                    />
+                  ))}
+                </ul>
+                <p className="hint">行号从 0 起：锚点行将插在该行上方（需为该块的标题行）。</p>
+              </div>
+            );
+          })()}
+          <div className="modal-actions">
+            <button onClick={() => setRepairOpen(false)}>关闭</button>
+          </div>
+        </Modal>
+      )}
 
       {toast && <div className="toast">{toast}</div>}
 

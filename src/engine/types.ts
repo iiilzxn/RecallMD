@@ -133,12 +133,16 @@ export interface BlockFacts {
 /** 已登记 Block（快照注册表输入；M4 起来自 SQLite，M3 由测试构造）。 */
 export interface RegisteredBlock extends BlockFacts {
   blockId: string;
+  /** 移动中稳定的身份（relativePath 会变）；Rust 恒提供，测试 fixtures 可省 */
+  documentId?: string;
   kind: BlockKind;
   headingLevel: number;
   contentVersion: number;
   status: BlockStatus;
   hasRating: boolean;
   participation: Participation;
+  /** 上次内容变更确认标记（Rust 恒提供，测试 fixtures 可省） */
+  needsRecheck?: boolean;
 }
 
 export type ReconcileAction =

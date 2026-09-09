@@ -337,6 +337,70 @@ th {
   z-index: 100;
 }
 
+/* --- M4：恢复模式横幅与修复面板 --- */
+
+.recover-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 14px;
+  font-size: 13px;
+  background: #fef3c7;
+  color: #92400e;
+  border-top: 1px solid #fcd34d;
+}
+
+.recover-banner.bad {
+  background: #fee2e2;
+  color: #991b1b;
+  border-top-color: #fca5a5;
+}
+
+.recover-banner button {
+  flex: none;
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.repair-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.repair-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.repair-list code {
+  background: #f1f5f9;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.repair-list .mono {
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.repair-missing h4 {
+  margin: 10px 0 4px;
+  font-size: 13px;
+}
+
 /* ===== 模态框 ===== */
 
 .modal-overlay {
