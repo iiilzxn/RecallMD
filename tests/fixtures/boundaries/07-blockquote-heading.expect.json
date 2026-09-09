@@ -1,0 +1,15 @@
+{
+  "blocks": [
+    {
+      "kind": "SECTION",
+      "title": "注",
+      "headingLevel": 1,
+      "headingPath": ["注"],
+      "ordinal": 0,
+      "blockId": null
+    }
+  ],
+  "unqualified": [],
+  "diagnosticCodes": [],
+  "indexable": true
+}

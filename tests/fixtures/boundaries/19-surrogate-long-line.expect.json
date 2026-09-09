@@ -1,0 +1,19 @@
+{
+  "blocks": [
+    {
+      "kind": "SECTION",
+      "title": "代理",
+      "headingLevel": 1,
+      "headingPath": ["代理"],
+      "ordinal": 0,
+      "startOffset": 0,
+      "bodyStartOffset": 6,
+      "endOffset": 109,
+      "blockId": null
+    }
+  ],
+  "unqualified": [],
+  "diagnosticCodes": [],
+  "indexable": true,
+  "_note": "51 个代理对（每个 2 个 UTF-16 码元）：bodyStart=6，正文 102 码元，末尾换行 → endOffset=109。offset 是 UTF-16 语义的钉子（§8.2 L272）"
+}

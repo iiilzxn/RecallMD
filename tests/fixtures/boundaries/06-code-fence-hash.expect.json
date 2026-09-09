@@ -1,0 +1,15 @@
+{
+  "blocks": [
+    {
+      "kind": "SECTION",
+      "title": "RDB",
+      "headingLevel": 1,
+      "headingPath": ["RDB"],
+      "ordinal": 0,
+      "blockId": null
+    }
+  ],
+  "unqualified": [],
+  "diagnosticCodes": [],
+  "indexable": true
+}

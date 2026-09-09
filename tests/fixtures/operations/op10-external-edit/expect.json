@@ -1,0 +1,18 @@
+{
+  "scenarios": [
+    {
+      "name": "注释保留：同样处理",
+      "snapshots": [{ "file": "after.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "action": "UPDATE_CONTENT", "status": "ACTIVE", "changeClass": "CONTENT_NEW", "contentVersionDelta": 1 }
+      ]
+    },
+    {
+      "name": "删注释：无法保证自动恢复（MISSING + 新 Candidate，无内容认领）",
+      "snapshots": [{ "file": "after-no-comment.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "action": "MARK_MISSING", "status": "MISSING", "next": null }
+      ]
+    }
+  ]
+}

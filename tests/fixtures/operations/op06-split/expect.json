@@ -1,0 +1,20 @@
+{
+  "scenarios": [
+    {
+      "name": "拆分：旧注释段继承旧 ID，新段无锚为 Candidate",
+      "snapshots": [{ "file": "after.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "action": "UPDATE_CONTENT", "status": "ACTIVE", "changeClass": "CONTENT_NEW", "contentVersionDelta": 1 }
+      ],
+      "_note": "新段（## 新）无锚不产结果；其插入计划由测试另行断言（policy missing 时指向 ordinal 1）"
+    },
+    {
+      "name": "拆分变体：新段已带新 ID → CREATE，不复制学习历史",
+      "snapshots": [{ "file": "after-b.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "action": "UPDATE_CONTENT", "contentVersionDelta": 1 },
+        { "blockId": "dddddddd-dddd-4ddd-9ddd-dddddddddddd", "action": "CREATE", "status": "ACTIVE", "relativePath": "doc.md" }
+      ]
+    }
+  ]
+}

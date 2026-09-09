@@ -1,0 +1,18 @@
+{
+  "blocks": [
+    {
+      "kind": "SECTION",
+      "title": "B",
+      "headingLevel": 2,
+      "headingPath": ["A", "B"],
+      "ordinal": 0,
+      "startOffset": 5,
+      "bodyStartOffset": 11,
+      "endOffset": 18,
+      "blockId": null
+    }
+  ],
+  "unqualified": [{ "title": "A", "startOffset": 0, "endOffset": 5 }],
+  "diagnosticCodes": [],
+  "indexable": true
+}

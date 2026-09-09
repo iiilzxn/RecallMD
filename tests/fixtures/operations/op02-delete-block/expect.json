@@ -1,0 +1,12 @@
+{
+  "scenarios": [
+    {
+      "name": "删除乙节",
+      "snapshots": [{ "file": "after.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "action": "UPDATE_META", "status": "ACTIVE", "changeClass": "META_ONLY", "contentVersionDelta": 0, "needsRecheck": false },
+        { "blockId": "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb", "action": "MARK_MISSING", "status": "MISSING", "changeClass": null, "next": null }
+      ]
+    }
+  ]
+}

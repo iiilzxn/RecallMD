@@ -1,0 +1,20 @@
+{
+  "scenarios": [
+    {
+      "name": "丢失",
+      "snapshots": [{ "file": "after-missing.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "action": "MARK_MISSING", "status": "MISSING", "next": null }
+      ]
+    },
+    {
+      "name": "复现",
+      "chain": true,
+      "snapshots": [{ "file": "after-restored.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "action": "RESTORE", "status": "ACTIVE", "changeClass": "AST_IDENTICAL", "contentVersionDelta": 0, "needsRecheck": false }
+      ],
+      "_note": "chain=true：先应用上一场景提案更新注册表再跑（模拟 M4 逐轮落库）；唯一旧 ID 重现即恢复原历史（L358）"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "_note": "同文件移动：ID 随片段移动，offset/ordinal/标题路径更新，正文不变则调度不变（§9.4 操作 4）。乙移到文件头后其路径栈为空，路径从 [甲,乙] 变 [乙]——仍属 META_ONLY",
+  "scenarios": [
+    {
+      "name": "乙节移动到甲节之前",
+      "snapshots": [{ "file": "after.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "action": "UPDATE_META", "status": "ACTIVE", "changeClass": "META_ONLY", "contentVersionDelta": 0, "needsRecheck": false },
+        { "blockId": "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb", "action": "UPDATE_META", "status": "ACTIVE", "changeClass": "META_ONLY", "contentVersionDelta": 0, "needsRecheck": false }
+      ]
+    }
+  ]
+}

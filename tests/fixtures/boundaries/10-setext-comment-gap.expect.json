@@ -1,0 +1,16 @@
+{
+  "blocks": [
+    {
+      "kind": "PREAMBLE",
+      "title": null,
+      "headingLevel": 0,
+      "headingPath": [],
+      "ordinal": 0,
+      "startOffset": 0,
+      "blockId": null
+    }
+  ],
+  "unqualified": [],
+  "diagnosticCodes": ["ID_MISPLACED"],
+  "indexable": true
+}

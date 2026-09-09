@@ -1,0 +1,29 @@
+{
+  "registry": [
+    { "file": "before-a.md", "as": "a.md" },
+    { "file": "before-b.md", "as": "b.md" }
+  ],
+  "scenarios": [
+    {
+      "name": "两文件都重扫：源已核实消失，同 ID 换文件复用",
+      "snapshots": [
+        { "file": "after-a.md", "as": "a.md" },
+        { "file": "after-b.md", "as": "b.md" }
+      ],
+      "results": [
+        { "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "action": "UPDATE_META", "status": "ACTIVE", "changeClass": "META_ONLY", "contentVersionDelta": 0 },
+        { "blockId": "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb", "action": "UPDATE_META", "status": "ACTIVE", "relativePath": "b.md", "changeClass": "META_ONLY", "contentVersionDelta": 0 },
+        { "blockId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "action": "UPDATE_META", "status": "ACTIVE", "changeClass": "META_ONLY", "contentVersionDelta": 0 }
+      ]
+    },
+    {
+      "name": "旧持有文件未入快照集合：不下结论（L316）",
+      "snapshots": [{ "file": "after-b.md", "as": "b.md" }],
+      "results": [
+        { "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "action": "DEFER_VERIFY_OLD_FILE", "next": null },
+        { "blockId": "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb", "action": "DEFER_VERIFY_OLD_FILE", "next": null },
+        { "blockId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "action": "UPDATE_META", "status": "ACTIVE", "changeClass": "META_ONLY", "contentVersionDelta": 0 }
+      ]
+    }
+  ]
+}

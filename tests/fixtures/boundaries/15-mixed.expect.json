@@ -1,0 +1,19 @@
+{
+  "blocks": [
+    {
+      "kind": "SECTION",
+      "title": "混合",
+      "headingLevel": 1,
+      "headingPath": ["混合"],
+      "ordinal": 0,
+      "startOffset": 0,
+      "bodyStartOffset": 6,
+      "endOffset": 67,
+      "blockId": null,
+      "oversized": false
+    }
+  ],
+  "unqualified": [],
+  "diagnosticCodes": [],
+  "indexable": true
+}

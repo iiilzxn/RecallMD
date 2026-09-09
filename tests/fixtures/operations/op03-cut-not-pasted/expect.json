@@ -1,0 +1,12 @@
+{
+  "_note": "剪切未粘贴与删除在引擎层同型（注释随片段离开）：MISSING，剪贴板不持有身份（§9.4 操作 3）",
+  "scenarios": [
+    {
+      "name": "剪切乙节尚未粘贴",
+      "snapshots": [{ "file": "after.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb", "action": "MARK_MISSING", "status": "MISSING", "next": null }
+      ]
+    }
+  ]
+}

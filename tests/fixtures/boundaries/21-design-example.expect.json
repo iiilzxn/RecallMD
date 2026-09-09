@@ -1,0 +1,40 @@
+{
+  "blocks": [
+    {
+      "kind": "SECTION",
+      "title": "Redis",
+      "headingLevel": 1,
+      "headingPath": ["Redis"],
+      "ordinal": 0,
+      "startOffset": 0,
+      "bodyStartOffset": 69,
+      "endOffset": 84,
+      "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    },
+    {
+      "kind": "SECTION",
+      "title": "RDB",
+      "headingLevel": 2,
+      "headingPath": ["Redis", "RDB"],
+      "ordinal": 1,
+      "startOffset": 84,
+      "bodyStartOffset": 152,
+      "endOffset": 165,
+      "blockId": "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb"
+    },
+    {
+      "kind": "SECTION",
+      "title": "AOF",
+      "headingLevel": 2,
+      "headingPath": ["Redis", "AOF"],
+      "ordinal": 2,
+      "startOffset": 165,
+      "bodyStartOffset": 233,
+      "endOffset": 244,
+      "blockId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    }
+  ],
+  "unqualified": [],
+  "diagnosticCodes": [],
+  "indexable": true
+}

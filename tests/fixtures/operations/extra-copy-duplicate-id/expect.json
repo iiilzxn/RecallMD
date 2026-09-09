@@ -1,0 +1,12 @@
+{
+  "scenarios": [
+    {
+      "name": "复制粘贴文本导致同一 ID 两处出现：检出重复，不把两份当同一 Block",
+      "snapshots": [{ "file": "after.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "action": "MARK_CONFLICT", "status": "ID_CONFLICT", "next": null }
+      ],
+      "diagnosticCodes": ["ID_DUPLICATED"]
+    }
+  ]
+}

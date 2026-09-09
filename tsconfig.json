@@ -12,7 +12,10 @@
     "skipLibCheck": true,
     "noEmit": true,
     "isolatedModules": true,
-    "useDefineForClassFields": true
+    "useDefineForClassFields": true,
+    // tsgo（typescript 7）不自动发现 node_modules/@types：显式声明。
+    // react/react-dom 经模块导入解析，不依赖全局注入。
+    "types": ["node"]
   },
-  "include": ["src"]
+  "include": ["src", "tests"]
 }

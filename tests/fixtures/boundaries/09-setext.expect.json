@@ -1,0 +1,27 @@
+{
+  "blocks": [
+    {
+      "kind": "SECTION",
+      "title": "Redis 持久化",
+      "headingLevel": 1,
+      "headingPath": ["Redis 持久化"],
+      "ordinal": 0,
+      "startOffset": 0,
+      "bodyStartOffset": 24,
+      "endOffset": 33
+    },
+    {
+      "kind": "SECTION",
+      "title": "AOF 标题",
+      "headingLevel": 2,
+      "headingPath": ["Redis 持久化", "AOF 标题"],
+      "ordinal": 1,
+      "startOffset": 33,
+      "bodyStartOffset": 50,
+      "endOffset": 58
+    }
+  ],
+  "unqualified": [],
+  "diagnosticCodes": [],
+  "indexable": true
+}

@@ -1,0 +1,13 @@
+{
+  "scenarios": [
+    {
+      "name": "删除边界后多枚 ID 落入同一候选：进入身份冲突，无赢家",
+      "snapshots": [{ "file": "after.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "action": "MARK_CONFLICT", "status": "ID_CONFLICT", "next": null },
+        { "blockId": "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb", "action": "MARK_CONFLICT", "status": "ID_CONFLICT", "next": null }
+      ],
+      "diagnosticCodes": ["ID_EXTRA"]
+    }
+  ]
+}

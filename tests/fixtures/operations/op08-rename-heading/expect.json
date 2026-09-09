@@ -1,0 +1,12 @@
+{
+  "scenarios": [
+    {
+      "name": "改标题：注释仍属该段则 ID 不变，题面更新、正文不重置",
+      "snapshots": [{ "file": "after.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb", "action": "UPDATE_META", "status": "ACTIVE", "changeClass": "META_ONLY", "contentVersionDelta": 0, "needsRecheck": false }
+      ],
+      "_note": "测试另行断言 next.bodyHash === registry.bodyHash 而 next.sourceHash !== registry.sourceHash（标题进 source_hash 不进 body_hash）"
+    }
+  ]
+}

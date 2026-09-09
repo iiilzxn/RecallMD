@@ -1,0 +1,29 @@
+{
+  "scenarios": [
+    {
+      "name": "未首评",
+      "flags": { "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb": { "hasRating": false, "participation": "ENABLED" } },
+      "snapshots": [{ "file": "after.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "action": "NOOP", "changeClass": "AST_IDENTICAL", "contentVersionDelta": 0 },
+        { "blockId": "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb", "action": "UPDATE_CONTENT", "status": "ACTIVE", "changeClass": "CONTENT_NEW", "contentVersionDelta": 1, "needsRecheck": false }
+      ]
+    },
+    {
+      "name": "已评分",
+      "flags": { "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb": { "hasRating": true, "participation": "ENABLED" } },
+      "snapshots": [{ "file": "after.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb", "action": "UPDATE_CONTENT", "changeClass": "CONTENT_REVIEWED", "needsRecheck": true }
+      ]
+    },
+    {
+      "name": "已暂停",
+      "flags": { "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb": { "hasRating": true, "participation": "PAUSED" } },
+      "snapshots": [{ "file": "after.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb", "action": "UPDATE_CONTENT", "changeClass": "CONTENT_PAUSED", "needsRecheck": true }
+      ]
+    }
+  ]
+}

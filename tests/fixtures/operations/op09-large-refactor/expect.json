@@ -1,0 +1,15 @@
+{
+  "scenarios": [
+    {
+      "name": "大规模重构：唯一锚点逐个识别，缺失/重复/错位显式列出，不按相似度批量认领",
+      "snapshots": [{ "file": "after.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "action": "UPDATE_META", "status": "ACTIVE", "changeClass": "META_ONLY" },
+        { "blockId": "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb", "action": "MARK_MISSING", "status": "MISSING", "next": null },
+        { "blockId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "action": "MARK_CONFLICT", "status": "ID_CONFLICT", "next": null },
+        { "blockId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "action": "NOOP", "next": null }
+      ],
+      "diagnosticCodes": ["ID_DUPLICATED"]
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "scenarios": [
+    {
+      "name": "旧 ID 缺失、新段为 Candidate：默认不靠正文相同自动恢复",
+      "snapshots": [{ "file": "after.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "action": "MARK_MISSING", "status": "MISSING", "next": null }
+      ],
+      "_note": "无 CREATE（新段无锚）；测试另行断言 after 的插入计划含 1 项（显式恢复路径）"
+    }
+  ]
+}

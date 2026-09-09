@@ -1,0 +1,14 @@
+{
+  "registry": [],
+  "scenarios": [
+    {
+      "name": "空注册表（新库）：注释字符串保留但全部按新登记处理，不读取他库历史（L359）",
+      "snapshots": [{ "file": "after.md", "as": "doc.md" }],
+      "results": [
+        { "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "action": "CREATE", "status": "ACTIVE", "relativePath": "doc.md" },
+        { "blockId": "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb", "action": "CREATE", "status": "ACTIVE", "relativePath": "doc.md" },
+        { "blockId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "action": "CREATE", "status": "ACTIVE", "relativePath": "doc.md" }
+      ]
+    }
+  ]
+}

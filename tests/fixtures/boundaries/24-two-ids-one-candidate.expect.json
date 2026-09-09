@@ -1,0 +1,16 @@
+{
+  "blocks": [
+    {
+      "kind": "SECTION",
+      "title": "双",
+      "headingLevel": 1,
+      "headingPath": ["双"],
+      "ordinal": 0,
+      "blockId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    }
+  ],
+  "unqualified": [],
+  "diagnosticCodes": ["ID_EXTRA"],
+  "indexable": true,
+  "_note": "同一候选锚区内第二枚 → 合并冲突线索 ID_EXTRA；首枚仍是合法锚点（§9.2 L310）。合并裁决由 reconcile 升级为 ID_CONFLICT"
+}

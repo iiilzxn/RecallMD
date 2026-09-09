@@ -1,0 +1,9 @@
+{
+  "blocks": [
+    { "kind": "SECTION", "title": "相同", "headingLevel": 1, "headingPath": ["相同"], "ordinal": 0, "blockId": null },
+    { "kind": "SECTION", "title": "相同", "headingLevel": 1, "headingPath": ["相同"], "ordinal": 1, "blockId": null }
+  ],
+  "unqualified": [],
+  "diagnosticCodes": [],
+  "indexable": true
+}
