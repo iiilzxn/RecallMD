@@ -1,12 +1,27 @@
-// SaveCoordinator：保存/草稿/冲突状态机（设计 §13.1/§13.4 的 M1 实现）。
+// SaveCoordinator：保存/草稿/冲突状态机（设计 §13.1/§13.4 的 M1 实现，M3 增锚点插入步骤）。
 //
 // 不变量：
 // - 同一文档同时最多一个保存在途；在途期间新请求只置 pending
 // - 快照 s 保存成功只更新 base，不把保存后的新输入标 clean
 // - 冲突状态暂停自动保存，但草稿继续写（崩溃兜底）
-// - IME 组合输入期间不发起保存/草稿落盘
+// - IME 组合输入期间不发起保存/草稿落盘，也不插入锚点
+// - 锚点插入失败/跳过不阻断保存：按原 buffer 落盘，无新 ID、无风险（§13.1 L812 降级）
 
 import { HASH_ABSENT, ipc, type HostErrorShape, type SaveDocumentDto } from "./ipc";
+import type { SystemEdit } from "./EditorController";
+
+/** 保存前的锚点插入计划（§9.2 L312：插入只发生于正常保存或明确纳入操作）。 */
+export interface AnchorPlan {
+  edits: SystemEdit[];
+}
+
+export interface AnchorBridge {
+  /** 返回 null = 本轮跳过（未纳入/无新块/有冲突诊断等门控由 bridge 决定）。 */
+  planForSave(text: string, trigger: "manual" | "auto"): Promise<AnchorPlan | null>;
+  /** 绑定 EditorController.applySystemEdits；false = 不可安全应用。 */
+  applyEdits(edits: SystemEdit[]): boolean;
+  onSkipped?(reason: "unsafe" | "composing"): void;
+}
 
 export type SaveStatus =
   | "idle" // 尚未打开文件
@@ -52,6 +67,12 @@ export class SaveCoordinator {
 
   /** 由 EditorController 提供：取当前 buffer 全文（只在保存边界调用，§15.2） */
   private getText: () => string = () => "";
+  /** M3：保存流锚点插入桥（UI 装配时注入；未注入时保存行为与 M2 完全一致）。 */
+  private anchorBridge: AnchorBridge | null = null;
+
+  attachAnchor(bridge: AnchorBridge) {
+    this.anchorBridge = bridge;
+  }
 
   onStateChange(l: Listener): () => void {
     this.listeners.add(l);
@@ -234,7 +255,6 @@ export class SaveCoordinator {
       return this.saveInFlight;
     }
 
-    const snapshotText = this.getText();
     const expected = this.baseHash ?? HASH_ABSENT;
     const eol = this.eol;
     const addBom = this.hasBom;
@@ -252,6 +272,23 @@ export class SaveCoordinator {
 
     const attempt = (async () => {
       try {
+        // 锚点插入（§13.1 L821–823 时序：解析保存快照→最小插入→最终文本→save_document）。
+        // 位于 attempt 内部：saveInFlight 已赋值，await 期间不会有第二轮插入计划。
+        // bridge 自己负责在 await 分析之前 markBaseline（等待期输入经 ChangeSet 映射合并）。
+        if (this.anchorBridge && !this.composing) {
+          try {
+            const plan = await this.anchorBridge.planForSave(this.getText(), trigger);
+            if (plan && plan.edits.length > 0) {
+              const applied = this.anchorBridge.applyEdits(plan.edits);
+              if (!applied) {
+                this.anchorBridge.onSkipped?.(this.composing ? "composing" : "unsafe");
+              }
+            }
+          } catch {
+            // 引擎/Worker 故障不阻断保存：按原 buffer 落盘（编辑优先于索引）
+          }
+        }
+        const snapshotText = this.getText(); // 含注释 → 新 ID 随正文落盘（§9.2 L312）
         const result = await ipc.saveDocument(f.relative, {
           text: snapshotText,
           eol,

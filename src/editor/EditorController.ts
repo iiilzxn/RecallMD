@@ -1,7 +1,7 @@
-// EditorController：持有 CM 实例与交互边界（设计 §6.1/§7.3 的 M1 实现）。
+// EditorController：持有 CM 实例与交互边界（设计 §6.1/§7.3 的 M1 实现，M3 增系统事务）。
 // React 不逐按键同步全文；全文读取只在保存/解析边界（§15.2）。
 
-import { EditorState, type Extension } from "@codemirror/state";
+import { ChangeSet, EditorState, Transaction, type Extension } from "@codemirror/state";
 import {
   EditorView,
   drawSelection,
@@ -15,12 +15,23 @@ import {
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { anchorHighlight } from "./anchorHighlight";
 
 export interface CursorInfo {
   line: number; // 1 起
   col: number; // 1 起
   lines: number;
   chars: number;
+}
+
+/** 系统编辑（ID 注释插入等）：带快照上下文，映射后逐字核对才应用。 */
+export interface SystemEdit {
+  from: number;
+  to: number;
+  insert: string;
+  /** 快照中插入点前后文（引擎给的 ≤32 字符），供安全核对（§13.1 L812）。 */
+  contextBefore: string;
+  contextAfter: string;
 }
 
 export interface EditorCallbacks {
@@ -36,6 +47,10 @@ export class EditorController {
   private extensions: Extension[] = [];
   private suppressChange = false;
   private cbs: EditorCallbacks;
+  /** IME 组合态：组合期间不应用系统编辑（§13.1 L810）。 */
+  private composing = false;
+  /** 系统编辑基线：edits 坐标系（快照文本）→ 当前 buffer 的累积映射。 */
+  private baseline: { text: string; changes: ChangeSet } | null = null;
 
   constructor(cbs: EditorCallbacks) {
     this.cbs = cbs;
@@ -52,6 +67,7 @@ export class EditorController {
       EditorView.lineWrapping,
       rectangularSelection(),
       highlightSelectionMatches(),
+      anchorHighlight,
       markdown({ base: markdownLanguage }),
       keymap.of([
         { key: "Mod-s", preventDefault: true, run: () => (this.cbs.onSave(), true) },
@@ -61,13 +77,27 @@ export class EditorController {
         ...searchKeymap,
       ]),
       EditorView.updateListener.of((u) => {
+        // 基线映射必须先于 suppressChange 早退：系统事务自身的改动也要进入映射，
+        // 否则基线后续映射缺一段（M3 风险清单 #9）
+        if (this.baseline && u.docChanged) {
+          this.baseline = {
+            text: this.baseline.text,
+            changes: this.baseline.changes.compose(u.changes),
+          };
+        }
         // 闭包读实例字段，replaceDoc 的 suppress 生效于事件时点
         if (u.docChanged && !this.suppressChange) this.cbs.onDocChanged();
         if (u.selectionSet || u.docChanged) this.reportCursor();
       }),
       EditorView.domEventHandlers({
-        compositionstart: () => this.cbs.onCompositionStart(),
-        compositionend: () => this.cbs.onCompositionEnd(),
+        compositionstart: () => {
+          this.composing = true;
+          this.cbs.onCompositionStart();
+        },
+        compositionend: () => {
+          this.composing = false;
+          this.cbs.onCompositionEnd();
+        },
       }),
     ];
     this.view = new EditorView({
@@ -97,6 +127,7 @@ export class EditorController {
   replaceDoc(text: string) {
     const view = this.view;
     if (!view) return;
+    this.baseline = null; // 全文重建后旧基线作废
     const oldLine = view.state.doc.lineAt(view.state.selection.main.head).number;
     this.suppressChange = true;
     try {
@@ -109,6 +140,64 @@ export class EditorController {
       this.suppressChange = false;
     }
     this.reportCursor();
+  }
+
+  isComposing(): boolean {
+    return this.composing;
+  }
+
+  /**
+   * 建立系统编辑基线：edits 以该快照文本的坐标计算，此后到应用之间的一切
+   * 文档变更（用户输入/其他系统事务）都会累积进映射。
+   * 必须在 await 引擎分析之前调用——compose 只覆盖基线创建之后的变更。
+   */
+  markBaseline(text: string) {
+    this.baseline = { text, changes: ChangeSet.empty(text.length) };
+  }
+
+  clearBaseline() {
+    this.baseline = null;
+  }
+
+  /**
+   * 应用系统编辑（§7.3 L211）：独立系统事务，不进用户撤销历史。
+   * 返回 false = 不可安全应用（组合中/无基线/上下文核对失败），buffer 未做任何修改。
+   * 从不 setState 重建——选区与撤销栈原样保留，光标随事务自动映射。
+   */
+  applySystemEdits(edits: SystemEdit[]): boolean {
+    const view = this.view;
+    if (!view) return edits.length === 0;
+    if (edits.length === 0) return true;
+    if (this.composing) return false;
+    if (!this.baseline) return false;
+
+    const mapped: { from: number; to: number; insert: string }[] = [];
+    for (const e of edits) {
+      // assoc=1：与插入点重合的用户输入排前，注释落其后的正文前（锚区内空白处均合法）
+      const from = this.baseline.changes.mapPos(e.from, 1);
+      const to = this.baseline.changes.mapPos(e.to, 1);
+      // 安全核对（§13.1 L812）：映射点前后文与快照上下文逐字一致才应用
+      if (view.state.doc.sliceString(Math.max(0, from - e.contextBefore.length), from) !== e.contextBefore) {
+        return false;
+      }
+      if (view.state.doc.sliceString(to, to + e.contextAfter.length) !== e.contextAfter) {
+        return false;
+      }
+      mapped.push({ from, to, insert: e.insert });
+    }
+
+    this.suppressChange = true;
+    try {
+      view.dispatch({
+        changes: mapped, // 同事务内位置均以事务前文档解释
+        annotations: Transaction.addToHistory.of(false),
+      });
+    } finally {
+      this.suppressChange = false;
+    }
+    // 用后即弃：Undo 恢复内容后必须重解析，绝不盲用旧范围（§7.3 L211）
+    this.baseline = null;
+    return true;
   }
 
   focus() {

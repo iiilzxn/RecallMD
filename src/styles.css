@@ -281,6 +281,12 @@ th {
   background: #fafbfc;
 }
 
+/* M3：ID 注释弱色高亮（§7.3 L211）——源码可见但弱化，预览不显示（M6 渲染层处理） */
+.editor-shell .cm-recall-anchor {
+  color: #94a3b8;
+  opacity: 0.75;
+}
+
 .statusbar {
   display: flex;
   align-items: center;
