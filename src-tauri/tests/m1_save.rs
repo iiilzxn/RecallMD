@@ -141,7 +141,25 @@ fn save_happy_path_roundtrip_and_cleanup() {
         "候选应被清理：{left:?}"
     );
     let ops = root.join(".recallmd").join("operations");
-    assert_eq!(fs::read_dir(&ops).unwrap().count(), 0, "操作日志应被清理");
+    // M4 起：日志保留在 FILE_COMMITTED，索引事务确认后才删除（§13.2 L847）
+    let op_files: Vec<String> = fs::read_dir(&ops)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(op_files.len(), 1, "保存后操作日志应在：{op_files:?}");
+    let log_raw = fs::read(ops.join(&op_files[0])).unwrap();
+    let log: serde_json::Value = serde_json::from_slice(&log_raw).unwrap();
+    assert_eq!(log["phase"], "FILE_COMMITTED");
+    recallmd_lib::persistence::document::index_complete(root.to_str().unwrap(), &r.operation_id)
+        .unwrap();
+    assert_eq!(
+        fs::read_dir(&ops).unwrap().count(),
+        0,
+        "索引确认后操作日志应被清理"
+    );
+    // 幂等：重复确认不再报错
+    recallmd_lib::persistence::document::index_complete(root.to_str().unwrap(), &r.operation_id)
+        .unwrap();
     let d = draft_read(root.to_str().unwrap(), "note.md").unwrap();
     assert!(!d.exists);
 

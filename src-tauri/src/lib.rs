@@ -189,6 +189,162 @@ fn draft_discard(relative_path: String) -> HostResult<()> {
     draft_discard_impl(&root_str()?, &relative_path)
 }
 
+// --- 索引与注册表（M4 §12.5） ---
+
+#[tauri::command]
+fn commit_index_batch(
+    request: crate::persistence::store::dto::CommitIndexBatchRequest,
+) -> HostResult<crate::persistence::store::dto::CommitIndexBatchResult> {
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::CommitIndex(Box::new(request)))?
+    {
+        crate::persistence::store::DbReply::CommitIndex(r) => Ok(*r),
+        _ => unreachable!("CommitIndex 应答"),
+    }
+}
+
+#[tauri::command]
+fn registry_read() -> HostResult<crate::persistence::store::dto::RegistrySnapshot> {
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::RegistrySnapshot)?
+    {
+        crate::persistence::store::DbReply::RegistrySnapshot(s) => Ok(*s),
+        _ => unreachable!("RegistrySnapshot 应答"),
+    }
+}
+
+#[tauri::command]
+fn index_complete(operation_id: String) -> HostResult<()> {
+    crate::persistence::document::index_complete(&root_str()?, &operation_id)
+}
+
+#[tauri::command]
+fn recovery_status() -> HostResult<crate::persistence::store::recovery::RecoveryStatus> {
+    crate::persistence::workspace::active_recovery().ok_or_else(|| {
+        crate::persistence::error::HostError::new(
+            crate::persistence::error::WORKSPACE_NOT_OPEN,
+            "尚未打开知识库",
+        )
+    })
+}
+
+#[tauri::command]
+fn enumerate_md() -> HostResult<Vec<String>> {
+    crate::persistence::workspace::enumerate_md(&crate::persistence::workspace::active_root()?)
+}
+
+/// "从现在重新开始"：启用历史丢失重建后暂停的块（§12.6 L798）
+#[tauri::command]
+fn enable_recovered_blocks() -> HostResult<u64> {
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::BulkEnablePaused)?
+    {
+        crate::persistence::store::DbReply::DocsChanged(n) => Ok(n),
+        _ => unreachable!("BulkEnablePaused 应答"),
+    }
+}
+
+// --- 锚点修复（M4 §9.4 显式用户操作） ---
+
+#[tauri::command]
+fn anchor_repair_preview(
+    op: crate::persistence::repair::AnchorRepairOp,
+) -> HostResult<crate::persistence::repair::AnchorRepairPreview> {
+    crate::persistence::repair::anchor_repair_preview(&root_str()?, &op)
+}
+
+#[tauri::command]
+fn anchor_repair_apply(
+    op: crate::persistence::repair::AnchorRepairOp,
+    confirmed_new_id: Option<String>,
+) -> HostResult<SaveDocumentResult> {
+    crate::persistence::repair::anchor_repair_apply(
+        &root_str()?,
+        &op,
+        confirmed_new_id.as_deref(),
+    )
+}
+
+// --- 备份与恢复（M4 §14.2；UI 入口属 M6，命令先行） ---
+
+#[tauri::command]
+fn backup_db_now() -> HostResult<crate::persistence::store::backup::DbBackupEntry> {
+    let recallmd =
+        crate::persistence::workspace::active_root()?.join(crate::persistence::paths::RECALLMD_DIR);
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::BackupDbNow {
+            recallmd_dir: recallmd,
+        })?
+    {
+        crate::persistence::store::DbReply::DbBackup(e) => Ok(*e),
+        _ => unreachable!("BackupDbNow 应答"),
+    }
+}
+
+#[tauri::command]
+fn backup_db_list() -> HostResult<Vec<crate::persistence::store::backup::DbBackupEntry>> {
+    let recallmd =
+        crate::persistence::workspace::active_root()?.join(crate::persistence::paths::RECALLMD_DIR);
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::BackupDbList {
+            recallmd_dir: recallmd,
+        })?
+    {
+        crate::persistence::store::DbReply::DbBackupList(l) => Ok(l),
+        _ => unreachable!("BackupDbList 应答"),
+    }
+}
+
+#[tauri::command]
+fn backup_db_restore(file_name: String) -> HostResult<crate::persistence::store::DbRestoreResult> {
+    let recallmd =
+        crate::persistence::workspace::active_root()?.join(crate::persistence::paths::RECALLMD_DIR);
+    let store = crate::persistence::workspace::active_store()?;
+    match &store {
+        // Offline（迁移失败/高版本）：无 worker，走纯文件恢复路径，用户随后重开工作区
+        crate::persistence::store::DbHandle::Offline { .. } => {
+            crate::persistence::store::restore_db_offline(&recallmd, &file_name)
+        }
+        online => match online.call(crate::persistence::store::DbAction::RestoreDb {
+            recallmd_dir: recallmd,
+            file_name,
+        })? {
+            crate::persistence::store::DbReply::DbRestore(r) => Ok(*r),
+            _ => unreachable!("RestoreDb 应答"),
+        },
+    }
+}
+
+#[tauri::command]
+fn backup_full(target_dir: String) -> HostResult<crate::persistence::store::backup::FullBackupResult> {
+    let root = crate::persistence::workspace::active_root()?;
+    let ws_id = crate::persistence::workspace::active_info()
+        .map(|i| i.workspace_id)
+        .unwrap_or_default();
+    let target = std::path::PathBuf::from(&target_dir);
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::BackupFull {
+            root_canon: root,
+            workspace_id: ws_id,
+            target_dir: target,
+        })?
+    {
+        crate::persistence::store::DbReply::FullBackup(r) => Ok(*r),
+        _ => unreachable!("BackupFull 应答"),
+    }
+}
+
+#[tauri::command]
+fn backup_full_restore(
+    backup_dir: String,
+    target_root: String,
+) -> HostResult<crate::persistence::store::backup::FullRestoreResult> {
+    crate::persistence::store::backup::backup_full_restore(
+        &std::path::PathBuf::from(backup_dir),
+        &std::path::PathBuf::from(target_root),
+    )
+}
+
 // HostError 实现 Serialize，Tauri 命令的 Err 会按 §14.1 类型化协议序列化给前端
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -217,7 +373,20 @@ pub fn run() {
             stat_document,
             draft_read,
             draft_write,
-            draft_discard
+            draft_discard,
+            commit_index_batch,
+            registry_read,
+            index_complete,
+            recovery_status,
+            enumerate_md,
+            enable_recovered_blocks,
+            anchor_repair_preview,
+            anchor_repair_apply,
+            backup_db_now,
+            backup_db_list,
+            backup_db_restore,
+            backup_full,
+            backup_full_restore
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

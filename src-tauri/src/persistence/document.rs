@@ -223,14 +223,16 @@ fn build_target_bytes(text: &str, eol: &str, add_bom: bool) -> HostResult<Vec<u8
     Ok(bytes)
 }
 
-#[derive(Debug, Serialize)]
-struct OperationLog {
-    operation_id: String,
-    path: String,
-    phase: String,
-    expected_hash: String,
-    new_hash: String,
-    timestamp_ms: i64,
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationLog {
+    pub operation_id: String,
+    pub path: String,
+    /// STARTED → FILE_COMMITTED → INDEX_COMMITTED（M4：日志保留到索引事务确认后才删除）
+    pub phase: String,
+    pub expected_hash: String,
+    pub new_hash: String,
+    pub timestamp_ms: i64,
 }
 
 fn write_oplog(dir: &Path, log: &OperationLog) -> HostResult<()> {
@@ -238,6 +240,39 @@ fn write_oplog(dir: &Path, log: &OperationLog) -> HostResult<()> {
     let json = serde_json::to_vec_pretty(log)
         .map_err(|e| HostError::new(IO_ERROR, format!("日志序列化失败：{e}")))?;
     write_file_atomic(&path, &json)
+}
+
+/// 索引事务确认（§13.2 L847：INDEX_COMMITTED 后清理日志）。
+/// 幂等：日志已删除 = 索引已确认过，直接 Ok；停在 STARTED = 保存从未提交。
+pub fn index_complete(root: &str, operation_id: &str) -> HostResult<()> {
+    let root_canon = resolve_root(root)?;
+    let ops_dir = recallmd_sub(&root_canon, "operations")?;
+    let log_path = ops_dir.join(format!("{operation_id}.json"));
+    let raw = match fs::read(&log_path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(map_io_error(&e, Some(log_path.to_string_lossy().into_owned()))),
+    };
+    let mut log: OperationLog = serde_json::from_slice(&raw)
+        .map_err(|e| HostError::new(VERIFY_FAILED, format!("操作日志损坏：{e}")).with_op(operation_id))?;
+    match log.phase.as_str() {
+        "FILE_COMMITTED" => {
+            log.phase = "INDEX_COMMITTED".into();
+            log.timestamp_ms = now_ms();
+            write_oplog(&ops_dir, &log)?;
+            let _ = fs::remove_file(&log_path);
+            Ok(())
+        }
+        "INDEX_COMMITTED" => {
+            let _ = fs::remove_file(&log_path);
+            Ok(())
+        }
+        other => Err(HostError::new(
+            VERIFY_FAILED,
+            format!("操作日志处于 {other} 阶段，索引确认不适用（保存未提交？）"),
+        )
+        .with_op(operation_id)),
+    }
 }
 
 pub fn save_document(
@@ -401,9 +436,10 @@ pub fn save_document(
         },
     );
 
-    // 清理：候选与日志已完成使命；保留 base/backup 供回退；草稿已过时
+    // 清理：候选完成使命；保留 base/backup 供回退；草稿已过时。
+    // M4：操作日志保留在 FILE_COMMITTED——索引事务确认（index_complete）后才删除，
+    // 重启时据此发现"正文已存、索引落后"的文档（§13.2 L861）
     let _ = fs::remove_file(&candidate_path);
-    let _ = fs::remove_file(ops_dir.join(format!("{op_id}.json")));
     let _ = fs::remove_file(&draft_path);
     let _ = fs::remove_file(&draft_meta_path);
 

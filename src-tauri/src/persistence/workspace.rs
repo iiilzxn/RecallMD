@@ -57,6 +57,12 @@ struct ActiveWorkspace {
     info: WorkspaceInfo,
     /// 持有句柄即持有 LockFileEx 独占锁；drop/进程退出自动释放
     lock_file: File,
+    /// M4：元数据库句柄（Online = 专用线程；Offline = 元数据只读，正文不受影响）
+    store: crate::persistence::store::DbHandle,
+    /// M4：打开时的恢复状态快照（recovery_status 命令直接读它，不打 DB）
+    recovery: crate::persistence::store::recovery::RecoveryStatus,
+    /// M4：数据库工作线程句柄（关闭时 join，确定释放文件句柄）
+    db_join: Option<std::thread::JoinHandle<()>>,
 }
 
 fn active_slot() -> &'static Mutex<Option<ActiveWorkspace>> {
@@ -80,6 +86,53 @@ pub fn active_info() -> Option<WorkspaceInfo> {
         .lock()
         .ok()
         .and_then(|g| g.as_ref().map(|w| w.info.clone()))
+}
+
+/// M4：当前激活 workspace 的数据库句柄（lib.rs 命令用）
+pub fn active_store() -> HostResult<crate::persistence::store::DbHandle> {
+    let guard = active_slot()
+        .lock()
+        .map_err(|_| HostError::new(IO_ERROR, "workspace 状态锁中毒"))?;
+    match guard.as_ref() {
+        Some(w) => Ok(w.store.clone()),
+        None => Err(HostError::new(WORKSPACE_NOT_OPEN, "尚未打开知识库")),
+    }
+}
+
+/// M4：打开时的恢复状态（含恢复模式，供 UI 明示 §12.6 L798）
+pub fn active_recovery() -> Option<crate::persistence::store::recovery::RecoveryStatus> {
+    active_slot()
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|w| w.recovery.clone()))
+}
+
+/// 仅当该根已激活且库在线时执行 DB 随批；None = 跳过（未激活=测试/直连，或 Offline）。
+/// Offline 时跳过而非失败：文件操作是用户主意图，索引在下次成功打开后收敛。
+fn store_followup(
+    root_canon: &Path,
+    action: crate::persistence::store::DbAction,
+) -> Option<HostResult<crate::persistence::store::DbReply>> {
+    let guard = active_slot().lock().ok()?;
+    let w = guard.as_ref()?;
+    if w.root_canon != root_canon {
+        return None;
+    }
+    match &w.store {
+        crate::persistence::store::DbHandle::Offline { .. } => None,
+        online => Some(online.call(action)),
+    }
+}
+
+/// M4：全量可见 .md 清单（启动枚举核对/索引收敛用，§14.3 步 5）
+pub fn enumerate_md(root_canon: &Path) -> HostResult<Vec<String>> {
+    let mut out = Vec::new();
+    visit_visible_md(root_canon, "", 0, &mut |_name, rel| {
+        out.push(rel.to_string());
+        true
+    });
+    out.sort();
+    Ok(out)
 }
 
 /// 校验根所在卷：仅本机固定磁盘 NTFS（§3 支持环境）
@@ -138,19 +191,15 @@ struct WorkspaceManifest {
     format_version: u32,
 }
 
-/// manifest 只含 workspace_id 与 format_version，不存绝对路径（§7.1）
-fn load_or_create_manifest(root_canon: &Path, recallmd: &Path) -> HostResult<WorkspaceInfo> {
+/// 读 manifest（不创建）。None = 缺失；损坏/高版本照旧报错。
+/// M4：缺失时不再立刻生成 UUID——身份交给 DB Workspace 行裁决（§7.1 L186）。
+fn read_manifest(recallmd: &Path) -> HostResult<Option<WorkspaceManifest>> {
     let path = recallmd.join("workspace.json");
-    let make_info =
-        |m: WorkspaceManifest| WorkspaceInfo {
-            workspace_id: m.workspace_id,
-            format_version: m.format_version,
-            root: display_path(root_canon),
-        };
     match fs::read(&path) {
         Ok(bytes) => {
             let m: WorkspaceManifest = serde_json::from_slice(&bytes)
-                .map_err(|e| HostError::new(IO_ERROR, format!("workspace.json 损坏：{e}")))?;
+                .map_err(|e| HostError::new(IO_ERROR, format!("workspace.json 损坏：{e}"))
+                    .with_path(display_path(&path)))?;
             if m.format_version > FORMAT_VERSION {
                 return Err(HostError::new(
                     IO_ERROR,
@@ -165,21 +214,22 @@ fn load_or_create_manifest(root_canon: &Path, recallmd: &Path) -> HostResult<Wor
                 return Err(HostError::new(IO_ERROR, "workspace.json 缺少 workspace_id")
                     .with_path(display_path(&path)));
             }
-            Ok(make_info(m))
+            Ok(Some(m))
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // 首次启用：生成新身份（manifest 与 SQLite 双丢时创建新 ID，§7.1）
-            let m = WorkspaceManifest {
-                workspace_id: Uuid::new_v4().to_string(),
-                format_version: FORMAT_VERSION,
-            };
-            let json = serde_json::to_vec_pretty(&m)
-                .map_err(|e| HostError::new(IO_ERROR, format!("manifest 序列化失败：{e}")))?;
-            write_file_atomic(&path, &json)?;
-            Ok(make_info(m))
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(map_io_error(&e, Some(display_path(&path)))),
     }
+}
+
+fn write_manifest(recallmd: &Path, workspace_id: &str) -> HostResult<()> {
+    let path = recallmd.join("workspace.json");
+    let m = WorkspaceManifest {
+        workspace_id: workspace_id.to_string(),
+        format_version: FORMAT_VERSION,
+    };
+    let json = serde_json::to_vec_pretty(&m)
+        .map_err(|e| HostError::new(IO_ERROR, format!("manifest 序列化失败：{e}")))?;
+    write_file_atomic(&path, &json)
 }
 
 fn open_lock_file(path: &Path) -> HostResult<File> {
@@ -215,8 +265,9 @@ fn lock_exclusive(f: &File) -> HostResult<()> {
     })
 }
 
-/// 打开（并激活）Workspace。顺序：取锁 → 读/建 manifest（§14.3）。
-/// 同根重复打开幂等返回；换根时旧锁在替换后自动释放。
+/// 打开（并激活）Workspace。顺序（§14.3）：取锁 → 读 manifest（缺失不补，交 DB 裁决）
+/// → DB 检查/迁移/备份/恢复扫描（open_store）→ manifest 对齐 → 激活。
+/// 同根重复打开幂等返回；换根时旧锁与旧 DB 线程先关闭。
 pub fn open_workspace(root: &str) -> HostResult<WorkspaceInfo> {
     let root_canon = resolve_root(root)?;
     validate_root_volume(&root_canon)?;
@@ -227,6 +278,10 @@ pub fn open_workspace(root: &str) -> HostResult<WorkspaceInfo> {
         if w.root_canon == root_canon {
             return Ok(w.info.clone());
         }
+    }
+    // 换根：释放旧激活态（锁 + DB 线程）
+    if let Some(old) = guard.take() {
+        shutdown_workspace(old);
     }
     let recallmd = root_canon.join(RECALLMD_DIR);
     match fs::create_dir(&recallmd) {
@@ -244,13 +299,62 @@ pub fn open_workspace(root: &str) -> HostResult<WorkspaceInfo> {
     }
     let lock_file = open_lock_file(&recallmd.join("workspace.lock"))?;
     lock_exclusive(&lock_file)?;
-    let info = load_or_create_manifest(&root_canon, &recallmd)?;
+
+    // manifest 读取（缺失 = None，不在此生成）
+    let manifest = read_manifest(&recallmd)?;
+    let manifest_id = manifest.as_ref().map(|m| m.workspace_id.clone());
+
+    // DB 打开：损坏吸收为隔离+重建；迁移高版本/失败 → Offline（§14.3 L965）
+    let ws_name = root_canon
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "workspace".into());
+    let outcome = crate::persistence::store::open_store(
+        &recallmd,
+        manifest_id.as_deref(),
+        &ws_name,
+    );
+    let effective_id = outcome.report.effective_workspace_id.clone();
+
+    // manifest 对齐：缺失 → 用裁决后的身份补写（DB 行恢复身份或全新 UUID，§7.1 L186）
+    if manifest.is_none() && !effective_id.is_empty() {
+        write_manifest(&recallmd, &effective_id)?;
+    }
+
+    let info = WorkspaceInfo {
+        workspace_id: effective_id,
+        format_version: FORMAT_VERSION,
+        root: display_path(&root_canon),
+    };
     *guard = Some(ActiveWorkspace {
         root_canon,
         info: info.clone(),
         lock_file,
+        store: outcome.handle,
+        recovery: outcome.report.recovery,
+        db_join: outcome.join,
     });
     Ok(info)
+}
+
+/// 关闭激活态：DB 线程 Shutdown + join（确定释放文件句柄）→ 解锁。
+/// Shutdown 未获 Ack（长任务卡住）：线程脱离回收，锁照常释放，不阻塞关闭。
+fn shutdown_workspace(w: ActiveWorkspace) {
+    let acked = matches!(
+        w.store.call(crate::persistence::store::DbAction::Shutdown),
+        Ok(crate::persistence::store::DbReply::Ack)
+    );
+    drop(w.store);
+    if acked {
+        if let Some(join) = w.db_join {
+            let _ = join.join();
+        }
+    } // else：JoinHandle drop = 脱离，线程排空后自行退出
+    let mut overlapped = OVERLAPPED::default();
+    let _ = unsafe {
+        UnlockFileEx(HANDLE(w.lock_file.as_raw_handle()), None, u32::MAX, 0, &mut overlapped)
+    };
+    drop(w.lock_file);
 }
 
 /// 关闭当前 Workspace 并释放锁（进程退出时由 OS 兜底释放）
@@ -259,11 +363,7 @@ pub fn close_workspace() -> HostResult<()> {
         .lock()
         .map_err(|_| HostError::new(IO_ERROR, "workspace 状态锁中毒"))?;
     if let Some(w) = guard.take() {
-        let mut overlapped = OVERLAPPED::default();
-        let _ = unsafe {
-            UnlockFileEx(HANDLE(w.lock_file.as_raw_handle()), None, u32::MAX, 0, &mut overlapped)
-        };
-        drop(w.lock_file);
+        shutdown_workspace(w);
     }
     Ok(())
 }
@@ -736,6 +836,24 @@ pub fn move_path(root_canon: &Path, src: &str, dst: &str) -> HostResult<MoveResu
     }
 
     write_fs_oplog(&ops_dir, &op_id, "MOVE", "COMMITTED", src, Some(dst), walk.file_count)?;
+    // M4：DB 随批（在线时）。失败保留操作日志——重启重放收敛（§13.2）；
+    // 未激活/Offline 跳过（测试直连、元数据离线；后续重索引兜底）
+    let moves: Vec<(String, String)> = walk
+        .md_files
+        .iter()
+        .map(|old| (old.clone(), old.replacen(src, dst, 1)))
+        .collect();
+    if let Some(Err(e)) = store_followup(
+        root_canon,
+        crate::persistence::store::DbAction::DocumentsMoved { entries: moves },
+    ) {
+        return Err(HostError::new(
+            INDEX_FAILED,
+            format!("文件已移动，但复习索引迁移失败（重启后自动收敛）：{e}"),
+        )
+        .with_op(&op_id)
+        .with_path(dst));
+    }
     let _ = fs::remove_file(ops_dir.join(format!("{op_id}.json")));
 
     Ok(MoveResult {
@@ -931,6 +1049,20 @@ pub fn delete_path(root_canon: &Path, relative: &str) -> HostResult<DeleteResult
     write_file_atomic(&manifest_path, &json)?;
 
     write_fs_oplog(&ops_dir, &op_id, "DELETE", "COMMITTED", relative, None, walk.file_count)?;
+    // M4：DB 随批——文档与块软删除（历史经 FK 保留）；失败保留日志待重放
+    if let Some(Err(e)) = store_followup(
+        root_canon,
+        crate::persistence::store::DbAction::DocumentsDeleted {
+            src_relative: relative.to_string(),
+        },
+    ) {
+        return Err(HostError::new(
+            INDEX_FAILED,
+            format!("文件已移入回收站，但复习索引登记失败（重启后自动收敛）：{e}"),
+        )
+        .with_op(&op_id)
+        .with_path(relative));
+    }
     let _ = fs::remove_file(ops_dir.join(format!("{op_id}.json")));
 
     Ok(DeleteResult { operation_id: op_id })
@@ -1009,6 +1141,11 @@ pub fn trash_restore(
         fs::create_dir_all(parent)
             .map_err(|e| map_io_error(&e, Some(display_path(parent))))?;
     }
+    // M4：恢复也记操作日志（DB 随批失败时重放；src=目标路径）
+    let op_id = Uuid::new_v4().to_string();
+    let ops_dir = recallmd_sub(root_canon, "operations")?;
+    write_fs_oplog(&ops_dir, &op_id, "RESTORE", "STARTED", target, None, manifest.file_count)
+        .map_err(|e| e.with_op(&op_id))?;
     unsafe {
         MoveFileExW(
             PCWSTR::from_raw(to_wide(&payload).as_ptr()),
@@ -1027,6 +1164,23 @@ pub fn trash_restore(
             let _ = fs::rename(f.path(), recovery_dir.join(f.file_name()));
         }
     }
+    // M4：DB 随批——文档回 PRESENT/PENDING、块 MISSING（诚实：reconcile 再复现）。
+    // 失败保留日志；重启重放按"目标已存在"裁决恢复
+    if let Some(Err(e)) = store_followup(
+        root_canon,
+        crate::persistence::store::DbAction::DocumentsRestored {
+            relative: target.to_string(),
+        },
+    ) {
+        return Err(HostError::new(
+            INDEX_FAILED,
+            format!("文件已恢复，但复习索引登记失败（重启后自动收敛）：{e}"),
+        )
+        .with_op(&op_id)
+        .with_path(target));
+    }
+    write_fs_oplog(&ops_dir, &op_id, "RESTORE", "COMMITTED", target, None, manifest.file_count)?;
+    let _ = fs::remove_file(ops_dir.join(format!("{op_id}.json")));
     let _ = fs::remove_dir_all(&trash_dir);
     Ok(RestoreResult {
         restored_path: target.to_string(),
