@@ -141,7 +141,8 @@ function judgeRegistered(
 
   if (conflictIds.has(prev.blockId)) {
     // M4：已删除块不进入冲突裁决（Rust 侧拒绝 DELETED→ID_CONFLICT）；
-    // 多处重现交由修复面板按 ID_DUPLICATED 诊断处理
+    // 多处重现/合并簇成员交由修复面板按 ID_DUPLICATED / ID_EXTRA 诊断处理。
+    // 合并簇（op07）成员可能各只出现 1 处——Rust 侧要求出现证据非空即可
     if (prev.status === "DELETED") {
       return {
         ...base,
@@ -252,7 +253,10 @@ function judgeRegistered(
   // 跨文件：核实旧持有文件（L316 不能因索引未处理删除就判复制）
   if (cur.report.relativePath !== prev.relativePath) {
     const oldSnap = snapshots.find((s) => s.relativePath === prev.relativePath);
-    if (oldSnap === undefined) {
+    // 旧持有方消失已落库为 MISSING（此前某轮已核实）→ 可安全判移动（§12.5 L316
+    // 守卫防的是"删除尚未索引"被误判复制；MISSING 即删除已索引）。
+    // 分两次保存的剪贴粘贴（先存剪走方、再存粘贴方）靠此路径收敛为单一状态。
+    if (oldSnap === undefined && prev.status !== "MISSING") {
       return {
         ...base,
         action: "DEFER_VERIFY_OLD_FILE",
@@ -299,12 +303,17 @@ function judgeRegistered(
     action,
     status: "ACTIVE",
     relativePath: cur.report.relativePath,
-    next: {
-      ...nextBlock,
-      relativePath: cur.report.relativePath,
-      contentVersion: prev.contentVersion + delta,
-      needsRecheck,
-    },
+    // NOOP 不得携带 next（Rust dto.rs requires_next(NOOP)=false，整批拒绝）；
+    // AST_IDENTICAL 时 delta=0、needsRecheck=false，丢弃 next 无信息损失
+    next:
+      action === "NOOP"
+        ? null
+        : {
+            ...nextBlock,
+            relativePath: cur.report.relativePath,
+            contentVersion: prev.contentVersion + delta,
+            needsRecheck,
+          },
     changeClass,
     contentVersionDelta: delta,
     needsRecheck,

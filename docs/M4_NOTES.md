@@ -2,8 +2,10 @@
 
 对照设计 §18 M4（L1136–1144）。实现日期：2026-09-09/10。
 
-状态：**实现完成，自动化验证全绿**（cargo 54 用例、vitest 109 用例、typecheck/build 干净）。
-人工验收清单见 §6（待用户 WebView2 实测）。
+状态：**实现完成，自动化验证全绿，人工验收通过（2026-09-10）**（cargo 54 用例、
+vitest 113 用例、typecheck/build 干净）。人工验收以 CDP 驱动真实 release exe 完成
+（WebView2 `--remote-debugging-port` + `__TAURI_INTERNALS__.invoke`，见 §6）；过程中
+发现并修复 4 个 TS↔Rust 接缝缺陷（§4.12–15），全部有回归测试钉死。
 
 ## 1. 交付范围（对照设计 §18 M4）
 
@@ -87,10 +89,13 @@ INDEX_FAILED 仅 toast"正文已保存，复习索引待修复"，阅读编辑�
     全文档 PENDING、同内容收敛不加 content_version；坏备份拒绝且现库不动；完整备份
     往返（正文逐字节、DB、manifest）+篡改拒绝+非空目标拒绝
   - DB_BUSY：外部 EXCLUSIVE 锁→等满 busy_timeout→retryable=true
-- `pnpm test`：**109 通过 / 2 跳过**（新增 fsrsContract 3、deletedSemantics 4、
-  commitBatch 2；既有 100 无回归）；`pnpm typecheck`、`pnpm build` 干净
-  （单 chunk 825KB 警告为既有状况）
-- 人工验收：见 §6 清单（WebView2，待用户执行）
+- `pnpm test`：**113 通过 / 2 跳过**（新增 reconcile-contract 4：NOOP 不带 next、
+  合并簇 MARK_CONFLICT 证据、跨文件分批保存 RESTORE×2；既有无回归）；
+  `pnpm typecheck`、`pnpm build` 干净（单 chunk 825KB 警告为既有状况）
+- 人工验收：**10/10 通过（2026-09-10，§6 已勾选）**——CDP 驱动 `target/release/
+  recallmd.exe`（`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port
+  <p> --remote-allow-origins=*"`），DOM 点击/SendKeys 键盘/文件系统与 sqlite 直接
+  核对三路并用；验收中发现的缺陷当场修复并复验。
 
 ## 4. 与设计文档的偏差 / 决策记录
 
@@ -121,6 +126,30 @@ INDEX_FAILED 仅 toast"正文已保存，复习索引待修复"，阅读编辑�
     其上方；合法性由重扫诊断兜底（错位→ID_MISPLACED 可再修）。
 11. **M1 测试更新**：保存后操作日志不再清理（保留至 INDEX_COMMITTED 是 M4 契约），
     m1_save 快乐路径改为断言 FILE_COMMITTED→index_complete→清理→幂等。
+12. **（验收修复）AnchorRepairOp 线上格式全错**：TS 用 PascalCase 变体名 +
+    Rust enum 只 `rename_all`（变体名）未 `rename_all_fields`（字段名）→ 修复面板
+    三动作全部 `invalid args` 拒绝。修：TS 字面量改 camelCase（ipc.ts/M2App），
+    Rust 补 `rename_all_fields = "camelCase"`（repair.rs:21）。
+13. **（验收修复）AST_IDENTICAL 的 NOOP 携带 next**：reconcile 对未变化块也填
+    `next`，Rust `requires_next(NOOP)=false` 整批拒绝 → 任何含未变化块的保存
+    `INDEX_FAILED`、文档卡 PENDING。修：NOOP 时 next=null（reconcile.ts，丢弃的
+    next 无信息损失：delta=0、needsRecheck=false）。
+14. **（验收修复）MARK_CONFLICT 出现证据下限放宽 ≥2 → ≥1（非空）**：合并簇
+    （op07）成员结构上各只出现 1 处，原 ≥2 规则使整簇永远无法提交（op07 仅在
+    TS 单测内模拟、从未过真 Rust）。修：dto.rs 改 `occurrences.is_empty()` 拒绝；
+    m4_store 原测试用例（空证据）语义不变。
+15. **（验收修复）修复面板 apply 后编辑器不刷新**：锚点手术直写磁盘，编辑器缓冲
+    保持旧文 → 下一次保存撞 FILE_CONFLICT、重扫读旧文。修：applyRepair 成功后对
+    当前打开文件走 checkExternal 重载（M2App.tsx，§13.4 同聚焦路径）。
+16. **（验收修复）MissingReinsert 插入位置改到标题行下方**（修正 §4.10）：
+    原语义"插在标题行上方"必落上一节版图 → 重扫恒判 MISPLACED，"恢复此 ID"
+    永远回不了 ACTIVE。修：插在 line_index（=标题行）下方即 §9.2 合法锚区
+    （repair.rs），preview 行号与面板提示同步更新。
+17. **（验收修复）跨文件剪贴粘贴分批保存不收敛**：先存剪走方（→MISSING）再存
+    粘贴方时，粘贴方单文件批因"旧持有文件不在快照集合"恒 DEFER（L316 守卫防
+    复制误判）。但旧持有方已落库 MISSING 即"删除已索引"，正是守卫等待的安全
+    条件。修：`oldSnap 缺席 && prev.status===MISSING` 放行走 RESTORE（reconcile.ts），
+    单一状态经两步保存收敛（验收 7 实测）。
 
 ## 5. 踩坑记录
 
@@ -141,19 +170,40 @@ INDEX_FAILED 仅 toast"正文已保存，复习索引待修复"，阅读编辑�
 8. **同毫秒备份名撞车**：文件名含毫秒仍可能在快机上相撞——生成前循环探测存在性
    递增 1ms，而非"先占名再改名"。
 
-## 6. 人工验收清单（WebView2，对照 §18 M4 + §14.4）
+## 6. 人工验收清单（2026-09-10 通过；CDP 驱动 release exe + sqlite/DOM 双侧核对）
 
-- [ ] 1. 新文件纳入复习→保存→重启应用：状态栏库级块数稳定（幂等可见）、无重复 ID
-- [ ] 2. 手工复制带注释段到另一节→状态栏冲突计数→修复面板"生成新 ID"→冲突消解
-- [ ] 3. 外部编辑器删除锚点注释行→刷新→修复面板"恢复此 ID"（行号）→块回到 ACTIVE
-- [ ] 4. 外部编辑器改正文→聚焦刷新→自动保存/手动保存后索引收敛（状态栏待同步归零）
-- [ ] 5. 保存瞬间杀进程→重开→无异常提示且块数正确（启动收敛 + 日志清理幂等）
-- [ ] 6. 关闭应用删除 metadata.sqlite（保留 workspace.json）→重开→"历史丢失"横幅
+- [x] 1. 新文件纳入复习→保存→重启应用：状态栏库级块数稳定（幂等可见）、无重复 ID
+      —— b.md 经「纳入复习」插 3 锚落盘，重启前后均为 5 块、ID 集合逐一致
+- [x] 2. 手工复制带注释段到另一节→状态栏冲突计数→修复面板"生成新 ID"→冲突消解
+      —— 文件级 2 身份冲突 + 库级"索引 5 活跃 · 1 冲突"（MARK_CONFLICT 落库）；
+      面板 DuplicateRekey 后新 UUID 落盘、编辑器自动重载、7 块全 ACTIVE
+      （此场景暴露缺陷 12/13/15，修复后复验通过）
+- [x] 3. 外部编辑器删除锚点注释行→刷新→修复面板"恢复此 ID"（行号）→块回到 ACTIVE
+      —— 删 ab8d 锚点行→切换文件刷新→MARK_MISSING（索引 6 活跃 · 1 缺失）→
+      面板行号 10（该块标题行）恢复→锚点落标题下方合法锚区→RESTORE 回 ACTIVE
+      （暴露缺陷 14/16，修复后复验通过）
+- [x] 4. 外部编辑器改正文→聚焦刷新→自动保存/手动保存后索引收敛（状态栏待同步归零）
+      —— 外部改正文→切换文件重载→扫描即收敛（无需手动保存），UPDATE_CONTENT
+      落库（contentVersion 1→2）、无待同步残留
+- [x] 5. 保存瞬间杀进程→重开→无异常提示且块数正确（启动收敛 + 日志清理幂等）
+      —— 编辑器打字+Ctrl+S 后 0.7s taskkill；重开无 toast 无横幅、4 条操作日志
+      重放后清零、7 块 READY
+- [x] 6. 关闭应用删除 metadata.sqlite（保留 workspace.json）→重开→"历史丢失"横幅
       →重扫登记为暂停→"从现在重新开始"启用
-- [ ] 7. 从 A 剪切块粘贴到 B，分别保存→库级计数不重复（单一状态）
-- [ ] 8. （可选跨日）或 backup_db_list 出现日备；backup_db_restore 恢复后历史仍在
-- [ ] 9. 完整备份到库外目录→目标含 manifest.json/db/files；恢复到空目录后正文一致
-- [ ] 10. 应用内移动/删除文件→索引随迁；回收站恢复→块经重扫 RESTORE 回 ACTIVE
+      —— REBUILT_NO_HISTORY 横幅文案正确；7 块自正文重建全 ACTIVE+PAUSED；
+      点击后全 ENABLED、横幅消失、mode=CLEARED
+- [x] 7. 从 A 剪切块粘贴到 B，分别保存→库级计数不重复（单一状态）
+      —— 剪走方先 MISSING，粘贴方保存后经 RESTORE 单行迁至新文件（1dde→a.md），
+      恰 1 行、7 块无重复（暴露缺陷 17，修复后复验通过）
+- [x] 8. backup_db_list 出现日备；backup_db_restore 恢复后历史仍在
+      —— 两份日备（UTC 时间戳）命令与目录一致；恢复后旧库入隔离区、重启启动
+      同步单批收敛（含 1dde 跨文件位置）；评分级历史保留由 m4_backup 测试覆盖
+- [x] 9. 完整备份到库外目录→目标含 manifest.json/db/files；恢复到空目录后正文一致
+      —— 7 文件（manifest/db/files/recallmd 元数据）；恢复到空目录后正文与
+      workspace.json 逐字节一致
+- [x] 10. 应用内移动/删除文件→索引随迁；回收站恢复→块经重扫 RESTORE 回 ACTIVE
+      —— b.md 经模态移动到 sub/（4 块 relativePath 随迁）；删除入 trash/<opId>
+      （块转 DELETED 不降级）；回收站恢复文件回位，打开重扫 4 块 RESTORE 回 ACTIVE
 
 ## 7. 遗留 / 下一里程碑输入
 
@@ -167,4 +217,7 @@ INDEX_FAILED 仅 toast"正文已保存，复习索引待修复"，阅读编辑�
 - **启动全量枚举核对/Watcher/10 分钟滚动校验**属 M7；runStartupSync 目前只做
   stale+未登记文件（未变化已登记文件跳过重解析）。
 - 完整备份未暂停编辑器自动保存（见偏差 7）；M6 做 UI 时可加暂停提示。
+- 首次启动（`%APPDATA%\com.recallmd.desktop` 尚不存在时）stderr 打一行
+  "最近列表更新失败 os error 3"，功能不受影响——后续可把首次写入改为
+  先建目录或降级为静默。
 - M3 遗留确认：`vite build` 单 chunk 825KB 警告依旧（React+CM6+ts-fsrs）。

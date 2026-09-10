@@ -147,9 +147,9 @@ export interface RecoveryStatusDto {
 }
 
 export type AnchorRepairOp =
-  | { kind: "DuplicateRekey"; relativePath: string; blockId: string; expectedHash: string }
-  | { kind: "MissingReinsert"; relativePath: string; blockId: string; lineIndex: number; expectedHash: string }
-  | { kind: "MisplacedRemove"; relativePath: string; blockId: string; expectedHash: string };
+  | { kind: "duplicateRekey"; relativePath: string; blockId: string; expectedHash: string }
+  | { kind: "missingReinsert"; relativePath: string; blockId: string; lineIndex: number; expectedHash: string }
+  | { kind: "misplacedRemove"; relativePath: string; blockId: string; expectedHash: string };
 
 export interface AnchorRepairPreviewDto {
   lineIndex: number;

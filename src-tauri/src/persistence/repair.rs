@@ -18,7 +18,7 @@ fn valid_uuid(s: &str) -> bool {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase", tag = "kind", deny_unknown_fields)]
 pub enum AnchorRepairOp {
     /// 副本换新 ID：把指定锚点行的 UUID 替换为新 UUID（§9.4 复制场景）
     DuplicateRekey {
@@ -26,8 +26,8 @@ pub enum AnchorRepairOp {
         block_id: String,
         expected_hash: String,
     },
-    /// 丢失 ID 恢复：在指定行号上方插入旧 ID 的锚点行（§9.4 丢失 ID 场景；
-    /// 行号由 UI 从诊断位置换算；插入后引擎重扫判定合法性）
+    /// 丢失 ID 恢复：在指定行号（该块标题行）下方插入旧 ID 的锚点行（§9.4 丢失 ID
+    /// 场景；插入后引擎重扫判定合法性）
     MissingReinsert {
         relative_path: String,
         block_id: String,
@@ -142,18 +142,24 @@ fn transform(
                     format!("行号越界：{line_index} > {}", lines.len()),
                 ));
             }
+            // §9.2 锚区：合法锚位在标题行与首行正文之间（只允许空白）。
+            // 插在 line_index（=该块标题行）下方；若插在上方会落入上一节版图，
+            // 重扫即判 MISPLACED（验收 3 实测修正）
             let mut out: Vec<String> = Vec::with_capacity(lines.len() + 1);
+            let mut inserted = false;
             for (i, l) in lines.iter().enumerate() {
+                out.push((*l).to_string());
                 if i == *line_index {
                     out.push(anchor.clone());
+                    inserted = true;
                 }
-                out.push((*l).to_string());
             }
-            if *line_index == lines.len() {
+            if !inserted {
+                // line_index == lines.len()（文件末尾追加）或空文件
                 out.push(anchor.clone());
             }
             let preview = AnchorRepairPreview {
-                line_index: *line_index,
+                line_index: (*line_index + 1).min(lines.len()),
                 before: None,
                 after: Some(anchor.clone()),
                 new_block_id: None,

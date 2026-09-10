@@ -681,6 +681,16 @@ export function M2App() {
         const r = await indexIpc.anchorRepairApply(op, preview.newBlockId ?? undefined);
         lastOpRef.current = r.operationId;
         setRepairOpen(false);
+        // 修复直写磁盘：若修的是当前打开文件，重载编辑器（§13.4 同聚焦检测），
+        // 否则缓冲与磁盘分叉，下一次保存会撞 FILE_CONFLICT
+        if (coordRef.current?.openFile?.relative === op.relativePath) {
+          await coordRef.current
+            .checkExternal((text, lineEnding) => {
+              editorRef.current?.replaceDoc(text);
+              setEolState(lineEnding as EolState);
+            })
+            .catch(() => {});
+        }
         showToast("已按预览修复并保存，索引将自动同步");
         scheduleEngineScan(); // 触发重扫 → reconcile 收敛身份状态
       } catch (e) {
@@ -1254,7 +1264,7 @@ export function M2App() {
                     disabled={repairBusy}
                     onClick={() =>
                       void applyRepairRef.current({
-                        kind: "DuplicateRekey",
+                        kind: "duplicateRekey",
                         relativePath: fileInfo?.relative ?? "",
                         blockId: d.blockId!,
                         expectedHash: coordRef.current?.getBaseHash() ?? "",
@@ -1269,7 +1279,7 @@ export function M2App() {
                     disabled={repairBusy}
                     onClick={() =>
                       void applyRepairRef.current({
-                        kind: "MisplacedRemove",
+                        kind: "misplacedRemove",
                         relativePath: fileInfo?.relative ?? "",
                         blockId: d.blockId!,
                         expectedHash: coordRef.current?.getBaseHash() ?? "",
@@ -1300,7 +1310,7 @@ export function M2App() {
                   disabled={repairBusy}
                   onRestore={(line) =>
                     void applyRepairRef.current({
-                      kind: "MissingReinsert",
+                      kind: "missingReinsert",
                       relativePath: b.relativePath,
                       blockId: b.blockId,
                       lineIndex: line,
@@ -1313,7 +1323,7 @@ export function M2App() {
                     />
                   ))}
                 </ul>
-                <p className="hint">行号从 0 起：锚点行将插在该行上方（需为该块的标题行）。</p>
+                <p className="hint">行号从 0 起：锚点行将插在该行（该块的标题行）下方。</p>
               </div>
             );
           })()}

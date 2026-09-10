@@ -476,8 +476,8 @@ pub fn validate_batch(req: &CommitIndexBatchRequest) -> HostResult<()> {
             validate_relative_path(&prev.relative_path)?;
             BlockStatus::parse(&prev.status)?;
         }
-        if action == ReconcileAction::MarkConflict && p.occurrences.len() < 2 {
-            return Err(index_failed("MARK_CONFLICT 须携带 ≥2 处出现证据"));
+        if action == ReconcileAction::MarkConflict && p.occurrences.is_empty() {
+            return Err(index_failed("MARK_CONFLICT 须携带出现证据（≥1 处）"));
         }
     }
 
