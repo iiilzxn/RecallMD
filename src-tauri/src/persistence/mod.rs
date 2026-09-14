@@ -8,4 +8,5 @@ pub mod recent;
 pub mod repair;
 pub mod store;
 pub mod util;
+pub mod watcher;
 pub mod workspace;

@@ -24,6 +24,7 @@ sha2 = "0.11.0"
 uuid = { version = "1.26.0", features = ["v4"] }
 # M4：SQLite 元数据存储（bundled 引擎 3.53.2，M0 验证 Backup API；设计 §6.2/§12.1）
 rusqlite = { version = "0.40.2", features = ["bundled", "backup"] }
+notify = "8"
 
 [profile.release]
 codegen-units = 1

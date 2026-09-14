@@ -136,6 +136,11 @@ pub enum DbAction {
         block_id: String,
         prompt: Option<String>,
     },
+    /// M7：编辑器冲突 ↔ 索引状态（CONFLICT 挡评；PENDING 待重扫，§13.4 L901）
+    MarkDocStatus {
+        relative: String,
+        status: String,
+    },
     /// 关闭工作线程（close_workspace 调用）
     Shutdown,
 }
@@ -161,7 +166,8 @@ impl DbAction {
             | DbAction::ReviewStats
             | DbAction::AppConfigRead
             | DbAction::AppConfigSet { .. }
-            | DbAction::ReviewSetPrompt { .. } => Duration::from_secs(15),
+            | DbAction::ReviewSetPrompt { .. }
+            | DbAction::MarkDocStatus { .. } => Duration::from_secs(15),
             DbAction::ReviewSubmit(_) => Duration::from_secs(30),
             DbAction::Shutdown => Duration::from_secs(10),
         }
@@ -700,6 +706,10 @@ fn dispatch(conn: &mut Connection, tokens: &mut ReviewTokens, action: DbAction) 
         DbAction::ReviewSetPrompt { block_id, prompt } => {
             review::set_prompt_on(conn, &block_id, prompt.as_deref())?;
             Ok(DbReply::Ack)
+        }
+        DbAction::MarkDocStatus { relative, status } => {
+            let n = ops::mark_doc_status_on(conn, &relative, &status)?;
+            Ok(DbReply::DocsChanged(n))
         }
         DbAction::Shutdown => Ok(DbReply::Ack),
     }

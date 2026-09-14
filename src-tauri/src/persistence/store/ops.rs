@@ -223,3 +223,39 @@ pub fn documents_moved_prefix(
     tx.commit().map_err(|e| sqlx(e, "提交移动重放"))?;
     Ok(total)
 }
+
+// ---------------------------------------------------------------------------
+// M7：编辑器冲突 ↔ 索引状态（§13.4 L901：unresolved conflict 的文档不允许评分；
+// 队列/评分查询只认 index_status='READY'，CONFLICT 挡评，解决后经重扫回 READY）
+// ---------------------------------------------------------------------------
+
+pub fn mark_doc_status_on(
+    conn: &mut Connection,
+    relative: &str,
+    status: &str,
+) -> HostResult<u64> {
+    if status != "CONFLICT" && status != "PENDING" {
+        return Err(HostError::new(
+            super::super::error::REVIEW_REJECTED,
+            format!("文档索引状态只允许 CONFLICT/PENDING（得到 {status:?}）"),
+        ));
+    }
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| sqlx(e, "开启状态事务"))?;
+    let ws = workspace_id_of(&tx)?;
+    let key = path_key_of(relative);
+    let n = tx
+        .execute(
+            "UPDATE Document SET index_status = ?1, updated_at = ?2 \
+             WHERE workspace_id = ?3 AND path_key = ?4 AND status <> 'DELETED'",
+            rusqlite::params![status, now_ms_value(), ws, key],
+        )
+        .map_err(|e| sqlx(e, "更新文档索引状态"))? as u64;
+    tx.commit().map_err(|e| sqlx(e, "提交状态事务"))?;
+    Ok(n)
+}
+
+fn now_ms_value() -> i64 {
+    crate::persistence::store::now_ms()
+}

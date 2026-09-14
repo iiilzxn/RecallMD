@@ -443,6 +443,9 @@ pub fn save_document(
     let _ = fs::remove_file(&draft_path);
     let _ = fs::remove_file(&draft_meta_path);
 
+    // M7：登记自写（§13.3 L883——watcher 以 hash 相等识别内部写入，非时间窗）
+    super::watcher::record_internal_write(relative, &new_hash);
+
     Ok(SaveDocumentResult {
         committed_hash: new_hash,
         byte_size: new_bytes.len() as u64,

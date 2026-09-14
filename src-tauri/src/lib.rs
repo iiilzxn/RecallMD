@@ -47,7 +47,14 @@ fn app_config_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 
 #[tauri::command]
 fn workspace_open(root: String, app: tauri::AppHandle) -> HostResult<WorkspaceInfo> {
+    use tauri::Emitter as _;
     let info = open_workspace(&root)?;
+    // M7：文件监听随工作区启动/关闭（§13.3）；事件推给前端编排同步
+    let watch_root = std::path::PathBuf::from(&info.root);
+    let emit_app = app.clone();
+    crate::persistence::watcher::start(watch_root, move |event, payload| {
+        let _ = emit_app.emit(event, payload);
+    });
     // 最近列表写应用配置目录（§7.1）；失败不阻塞打开
     if let Some(cfg) = app_config_dir(&app) {
         if let Err(e) = record_recent(&cfg, &info.root, &info.workspace_id) {
@@ -59,6 +66,8 @@ fn workspace_open(root: String, app: tauri::AppHandle) -> HostResult<WorkspaceIn
 
 #[tauri::command]
 fn workspace_close() -> HostResult<()> {
+    // 先停监听再关工作区：关闭期间的文件变化由下次打开的启动枚举核对
+    crate::persistence::watcher::stop();
     close_workspace()
 }
 
@@ -450,6 +459,17 @@ fn review_set_prompt(block_id: String, prompt: Option<String>) -> HostResult<()>
     }
 }
 
+/// M7：编辑器冲突进入/解除时标记文档索引状态（CONFLICT 挡评，§13.4 L901）
+#[tauri::command]
+fn mark_doc_status(relative: String, status: String) -> HostResult<u64> {
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::MarkDocStatus { relative, status })?
+    {
+        crate::persistence::store::DbReply::DocsChanged(n) => Ok(n),
+        _ => unreachable!("MarkDocStatus 应答"),
+    }
+}
+
 // HostError 实现 Serialize，Tauri 命令的 Err 会按 §14.1 类型化协议序列化给前端
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -500,7 +520,8 @@ pub fn run() {
             review_stats,
             app_config_read,
             app_config_set,
-            review_set_prompt
+            review_set_prompt,
+            mark_doc_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
