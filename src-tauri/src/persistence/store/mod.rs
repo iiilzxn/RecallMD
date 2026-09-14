@@ -15,6 +15,7 @@ pub mod migrate;
 pub mod ops;
 pub mod query;
 pub mod recovery;
+pub mod review;
 pub mod schema;
 
 use std::path::{Path, PathBuf};
@@ -29,6 +30,10 @@ use commit::commit_on;
 use dto::{CommitIndexBatchRequest, CommitIndexBatchResult, RegistrySnapshot};
 use query::{registry_snapshot_on, RegistryQuery};
 use recovery::{RecoveryStatus, MODE_QUARANTINED_CORRUPT, MODE_REBUILT_NO_HISTORY};
+use review::{
+    ResetBlockResult, ReviewBeginResult, ReviewQueueResult, ReviewTokens, SubmitReviewRequest,
+    SubmitReviewResult,
+};
 
 pub const METADATA_DB: &str = "metadata.sqlite";
 
@@ -107,6 +112,19 @@ pub enum DbAction {
         workspace_id: String,
         target_dir: PathBuf,
     },
+    /// M5：题面揭示——核验可评分并签发复习令牌（§10.4）
+    ReviewBegin { block_id: String },
+    /// M5：评分提交（单事务：幂等/令牌 CAS/时钟/配额/双事件）
+    ReviewSubmit(Box<SubmitReviewRequest>),
+    /// M5：到期队列（分组 + 配额）
+    ReviewQueue { page_size: Option<i64> },
+    /// M5：参与策略（PAUSE/RESUME/EXCLUDE/INCLUDE）
+    ReviewSetParticipation {
+        block_ids: Vec<String>,
+        action: String,
+    },
+    /// M5：单独重置（§10.3）
+    ReviewResetBlock { block_id: String },
     /// 关闭工作线程（close_workspace 调用）
     Shutdown,
 }
@@ -125,6 +143,11 @@ impl DbAction {
             }
             DbAction::RestoreDb { .. } => Duration::from_secs(300),
             DbAction::BackupFull { .. } => Duration::from_secs(15 * 60),
+            DbAction::ReviewBegin { .. }
+            | DbAction::ReviewQueue { .. }
+            | DbAction::ReviewSetParticipation { .. }
+            | DbAction::ReviewResetBlock { .. } => Duration::from_secs(15),
+            DbAction::ReviewSubmit(_) => Duration::from_secs(30),
             DbAction::Shutdown => Duration::from_secs(10),
         }
     }
@@ -139,6 +162,11 @@ pub enum DbReply {
     DbBackupList(Vec<DbBackupEntry>),
     DbRestore(Box<DbRestoreResult>),
     FullBackup(Box<FullBackupResult>),
+    ReviewBegin(Box<ReviewBeginResult>),
+    ReviewSubmit(Box<SubmitReviewResult>),
+    ReviewQueue(Box<ReviewQueueResult>),
+    ReviewCount(u64),
+    ReviewReset(Box<ResetBlockResult>),
     Ack,
 }
 
@@ -498,6 +526,8 @@ pub fn restore_db_offline(recallmd: &Path, file_name: &str) -> HostResult<DbRest
 
 fn worker_loop(job_rx: mpsc::Receiver<DbJob>, conn: Connection) {
     let mut conn = conn;
+    // M5 复习令牌表：worker 线程独占（§10.4 进程内令牌；worker 生命周期=工作区会话）
+    let mut tokens = ReviewTokens::default();
     while let Ok(job) = job_rx.recv() {
         let DbJob { action, reply } = job;
         if matches!(action, DbAction::Shutdown) {
@@ -535,8 +565,10 @@ fn worker_loop(job_rx: mpsc::Receiver<DbJob>, conn: Connection) {
         // 单线程持有连接；panic 捕获避免调用方悬挂（§14.1 有界重试）
         let result = {
             let c = &mut conn;
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || dispatch(c, action)))
-            {
+            let t = &mut tokens;
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                dispatch(c, t, action)
+            })) {
                 Ok(r) => r,
                 Err(_) => Err(HostError::new(
                     IO_ERROR,
@@ -551,7 +583,7 @@ fn worker_loop(job_rx: mpsc::Receiver<DbJob>, conn: Connection) {
 }
 
 /// 分发到各内层同步函数（所有 SQL 只经此处进入连接）
-fn dispatch(conn: &mut Connection, action: DbAction) -> HostResult<DbReply> {
+fn dispatch(conn: &mut Connection, tokens: &mut ReviewTokens, action: DbAction) -> HostResult<DbReply> {
     match action {
         DbAction::CommitIndex(req) => {
             let result = commit_on(conn, &req)?;
@@ -615,6 +647,26 @@ fn dispatch(conn: &mut Connection, action: DbAction) -> HostResult<DbReply> {
         } => {
             let result = backup::backup_full(conn, &root_canon, &workspace_id, &target_dir)?;
             Ok(DbReply::FullBackup(Box::new(result)))
+        }
+        DbAction::ReviewBegin { block_id } => {
+            let result = review::review_begin_on(conn, tokens, &block_id)?;
+            Ok(DbReply::ReviewBegin(Box::new(result)))
+        }
+        DbAction::ReviewSubmit(req) => {
+            let result = review::submit_review_on(conn, tokens, &req)?;
+            Ok(DbReply::ReviewSubmit(Box::new(result)))
+        }
+        DbAction::ReviewQueue { page_size } => {
+            let result = review::review_queue_on(conn, page_size)?;
+            Ok(DbReply::ReviewQueue(Box::new(result)))
+        }
+        DbAction::ReviewSetParticipation { block_ids, action } => {
+            let n = review::set_participation_on(conn, &block_ids, &action)?;
+            Ok(DbReply::ReviewCount(n))
+        }
+        DbAction::ReviewResetBlock { block_id } => {
+            let result = review::reset_block_on(conn, &block_id)?;
+            Ok(DbReply::ReviewReset(Box::new(result)))
         }
         DbAction::Shutdown => Ok(DbReply::Ack),
     }

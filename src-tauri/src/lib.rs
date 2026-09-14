@@ -345,6 +345,69 @@ fn backup_full_restore(
     )
 }
 
+// --- 复习引擎（M5 §10/§11；算法推进在 TS scheduler，事务在此） ---
+
+#[tauri::command]
+fn review_begin(
+    block_id: String,
+) -> HostResult<crate::persistence::store::review::ReviewBeginResult> {
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::ReviewBegin { block_id })?
+    {
+        crate::persistence::store::DbReply::ReviewBegin(r) => Ok(*r),
+        _ => unreachable!("ReviewBegin 应答"),
+    }
+}
+
+#[tauri::command]
+fn review_submit(
+    request: crate::persistence::store::review::SubmitReviewRequest,
+) -> HostResult<crate::persistence::store::review::SubmitReviewResult> {
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::ReviewSubmit(Box::new(request)))?
+    {
+        crate::persistence::store::DbReply::ReviewSubmit(r) => Ok(*r),
+        _ => unreachable!("ReviewSubmit 应答"),
+    }
+}
+
+#[tauri::command]
+fn review_queue(
+    page_size: Option<i64>,
+) -> HostResult<crate::persistence::store::review::ReviewQueueResult> {
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::ReviewQueue { page_size })?
+    {
+        crate::persistence::store::DbReply::ReviewQueue(r) => Ok(*r),
+        _ => unreachable!("ReviewQueue 应答"),
+    }
+}
+
+#[tauri::command]
+fn review_set_participation(block_ids: Vec<String>, action: String) -> HostResult<u64> {
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::ReviewSetParticipation {
+            block_ids,
+            action,
+        })?
+    {
+        crate::persistence::store::DbReply::ReviewCount(n) => Ok(n),
+        _ => unreachable!("ReviewSetParticipation 应答"),
+    }
+}
+
+#[tauri::command]
+fn review_reset_block(
+    block_id: String,
+) -> HostResult<crate::persistence::store::review::ResetBlockResult> {
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::ReviewResetBlock { block_id })?
+    {
+        crate::persistence::store::DbReply::ReviewReset(r) => Ok(*r),
+        _ => unreachable!("ReviewResetBlock 应答"),
+    }
+}
+
 // HostError 实现 Serialize，Tauri 命令的 Err 会按 §14.1 类型化协议序列化给前端
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -386,7 +449,12 @@ pub fn run() {
             backup_db_list,
             backup_db_restore,
             backup_full,
-            backup_full_restore
+            backup_full_restore,
+            review_begin,
+            review_submit,
+            review_queue,
+            review_set_participation,
+            review_reset_block
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

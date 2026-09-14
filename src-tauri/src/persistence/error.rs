@@ -31,6 +31,16 @@ pub const IDENTITY_CONFLICT: &str = "IDENTITY_CONFLICT";
 pub const WORKSPACE_OFFLINE: &str = "WORKSPACE_OFFLINE";
 /// M4 新增：索引 CAS 失败——expectedIndexRevision 与当前不符（先例：WORKSPACE_NOT_OPEN）
 pub const STALE_INDEX: &str = "STALE_INDEX";
+/// M5 新增：复习令牌不存在或已使用（§10.4 进程内令牌）
+pub const REVIEW_TOKEN_INVALID: &str = "REVIEW_TOKEN_INVALID";
+/// M5 新增：复习令牌绑定的快照已过期（正文/索引/状态已变化，须重新揭示题面）
+pub const REVIEW_TOKEN_STALE: &str = "REVIEW_TOKEN_STALE";
+/// M5 新增：今日新内容首次评分配额已用尽（§10.2）
+pub const QUOTA_EXCEEDED: &str = "QUOTA_EXCEEDED";
+/// M5 新增：系统时钟异常（倒跳/漂移），评分暂停待检查（§11.4）
+pub const TIME_ANOMALY: &str = "TIME_ANOMALY";
+/// M5 新增：评分/状态操作前置条件不满足（未到期、缺沿用/重学决策等）
+pub const REVIEW_REJECTED: &str = "REVIEW_REJECTED";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
