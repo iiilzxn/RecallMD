@@ -756,6 +756,9 @@ export function M2App() {
     });
     extRef.current = ext;
     ext.startTimers();
+    // 启动枚举只扫候选（stale/未登记）文件——消失文档的核对交给首轮 quick
+    // （§13.3 L885"启动全量枚举核对"；延迟避开启动同步高峰）
+    const bootPoke = window.setTimeout(() => void ext.quick(true), 2_500);
     let un1: UnlistenFn | null = null;
     let un2: UnlistenFn | null = null;
     void listen<FsChangedPathPayload>("fs-changed", (e) => ext.handleFsChanged(e.payload)).then(
@@ -767,6 +770,7 @@ export function M2App() {
       un2 = f;
     });
     return () => {
+      window.clearTimeout(bootPoke);
       ext.stopTimers();
       un1?.();
       un2?.();

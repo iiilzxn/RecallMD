@@ -341,3 +341,64 @@ fn m7_no_adopt_for_copy_when_source_still_present() {
     assert_eq!(count(&conn, "SELECT count(*) FROM Document"), 2);
     assert_ne!(doc_id_of(&conn, "b.md"), original);
 }
+
+// ---------------------------------------------------------------------------
+// 纯删除批（M7 Watcher 单独同步被删文件）：无文档头 + MARK_MISSING 提案合法
+// ---------------------------------------------------------------------------
+
+#[test]
+fn m7_pure_deletion_batch_marks_missing() {
+    let mut conn = temp_db("pure-del");
+    let bid = new_id();
+    let body = h64("body");
+    commit_on(
+        &mut conn,
+        &CommitIndexBatchRequest {
+            documents: vec![header("a.md", 0, &h64("doc-a"))],
+            block_results: vec![create(&bid, "a.md", &body)],
+            snapshot_paths: vec!["a.md".into()],
+        },
+    )
+    .unwrap();
+    // Watcher 场景：目标文件消失 → documents 空、只有 MARK_MISSING、快照含该路径
+    let r = commit_on(
+        &mut conn,
+        &CommitIndexBatchRequest {
+            documents: vec![],
+            block_results: vec![BlockProposalDto {
+                block_id: bid.clone(),
+                action: "MARK_MISSING".into(),
+                status: "MISSING".into(),
+                relative_path: Some("a.md".into()),
+                next: None,
+                change_class: None,
+                content_version_delta: 0,
+                needs_recheck: false,
+                prev: Some(PrevRefDto {
+                    relative_path: "a.md".into(),
+                    status: "ACTIVE".into(),
+                }),
+                reason: "文件已删除".into(),
+                occurrences: vec![],
+            }],
+            snapshot_paths: vec!["a.md".into()],
+        },
+    )
+    .unwrap();
+    assert!(r.blocks[0].applied);
+    assert_eq!(
+        count(&conn, "SELECT count(*) FROM KnowledgeBlock WHERE status = 'MISSING'"),
+        1
+    );
+    // 全空批仍拒
+    let err = commit_on(
+        &mut conn,
+        &CommitIndexBatchRequest {
+            documents: vec![],
+            block_results: vec![],
+            snapshot_paths: vec![],
+        },
+    )
+    .unwrap_err();
+    assert_eq!(err.code, "INDEX_FAILED");
+}

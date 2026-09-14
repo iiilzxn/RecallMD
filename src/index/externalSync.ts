@@ -115,11 +115,19 @@ export class ExternalSync {
     const now = Date.now();
     if (!force && now - this.lastQuickAt < 30_000) return; // 前台节流（§13.3）
     this.lastQuickAt = now;
+    // 根不可达/权限等：本轮放弃，绝不据此判定任何缺失（§13.5 L909）——
+    // 审计阶段错误保持静默（60s 节拍不能刷屏），重扫错误才上报
+    let stats: Awaited<ReturnType<typeof indexIpc.auditQuick>>;
+    let registry: RegistrySnapshot;
     try {
-      const [stats, registry] = await Promise.all([
+      [stats, registry] = await Promise.all([
         indexIpc.auditQuick(),
         indexIpc.registryRead(),
       ]);
+    } catch {
+      return;
+    }
+    try {
       const statKeys = new Set(stats.map((s) => s.rel.toLowerCase()));
       const docByPath = new Map(
         registry.documents.map((d) => [d.relativePath.toLowerCase(), d] as const),
@@ -147,8 +155,8 @@ export class ExternalSync {
           this.deps.onSynced();
         }
       }
-    } catch {
-      // 根不可达/权限等：本轮放弃，绝不据此判定任何缺失（§13.5 L909）
+    } catch (e) {
+      this.deps.onError?.(`目录核对重扫失败：${(e as { message?: string }).message ?? e}`);
     }
   }
 

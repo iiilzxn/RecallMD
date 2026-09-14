@@ -366,8 +366,10 @@ pub fn path_key_of(relative_path: &str) -> String {
 
 /// 全批校验；返回规范化后的 reason 截断等信息由调用方使用
 pub fn validate_batch(req: &CommitIndexBatchRequest) -> HostResult<()> {
-    if req.documents.is_empty() {
-        return Err(index_failed("commit 批缺少文档头"));
+    // M7：纯删除批（目标全消失→无文档头、只有 MARK_MISSING 提案）合法——
+    // Watcher 单独同步一个被删文件时就是这种形状（快照路径仍随批携带）
+    if req.documents.is_empty() && req.block_results.is_empty() {
+        return Err(index_failed("commit 批缺少文档头与提案"));
     }
     if req.documents.len() > MAX_DOCUMENTS_PER_BATCH {
         return Err(index_failed(format!(
