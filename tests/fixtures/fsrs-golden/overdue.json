@@ -1,0 +1,100 @@
+[
+  {
+    "now": "2027-08-10T08:10:00.000Z",
+    "rating": "Again",
+    "before": {
+      "due": "2026-11-20T08:10:00.000Z",
+      "stability": 37.44787707,
+      "difficulty": 2.1043314,
+      "elapsed_days": 30,
+      "scheduled_days": 37,
+      "reps": 3,
+      "lapses": 0,
+      "learning_steps": 0,
+      "state": 2,
+      "last_review": "2026-10-14T08:10:00.000Z"
+    },
+    "after": {
+      "due": "2027-08-10T08:20:00.000Z",
+      "stability": 3.65378118,
+      "difficulty": 7.38997579,
+      "elapsed_days": 300,
+      "scheduled_days": 0,
+      "reps": 4,
+      "lapses": 1,
+      "learning_steps": 0,
+      "state": 3,
+      "last_review": "2027-08-10T08:10:00.000Z"
+    },
+    "projections": {
+      "phase": "RELEARNING",
+      "dueMs": 1817886000000,
+      "intervalMs": 600000,
+      "stability": 3.65378118,
+      "difficulty": 7.38997579,
+      "reps": 4,
+      "lapses": 1
+    },
+    "log": {
+      "rating": 1,
+      "state": 2,
+      "due": "2026-10-14T08:10:00.000Z",
+      "stability": 37.44787707,
+      "difficulty": 2.1043314,
+      "elapsed_days": 300,
+      "last_elapsed_days": 30,
+      "scheduled_days": 37,
+      "learning_steps": 0,
+      "review": "2027-08-10T08:10:00.000Z"
+    }
+  },
+  {
+    "now": "2027-08-10T08:10:00.000Z",
+    "rating": "Good",
+    "before": {
+      "due": "2026-11-20T08:10:00.000Z",
+      "stability": 37.44787707,
+      "difficulty": 2.1043314,
+      "elapsed_days": 30,
+      "scheduled_days": 37,
+      "reps": 3,
+      "lapses": 0,
+      "learning_steps": 0,
+      "state": 2,
+      "last_review": "2026-10-14T08:10:00.000Z"
+    },
+    "after": {
+      "due": "2028-07-15T08:10:00.000Z",
+      "stability": 339.78899885,
+      "difficulty": 2.09745544,
+      "elapsed_days": 300,
+      "scheduled_days": 340,
+      "reps": 4,
+      "lapses": 0,
+      "learning_steps": 0,
+      "state": 2,
+      "last_review": "2027-08-10T08:10:00.000Z"
+    },
+    "projections": {
+      "phase": "REVIEW",
+      "dueMs": 1847261400000,
+      "intervalMs": 29376000000,
+      "stability": 339.78899885,
+      "difficulty": 2.09745544,
+      "reps": 4,
+      "lapses": 0
+    },
+    "log": {
+      "rating": 3,
+      "state": 2,
+      "due": "2026-10-14T08:10:00.000Z",
+      "stability": 37.44787707,
+      "difficulty": 2.1043314,
+      "elapsed_days": 300,
+      "last_elapsed_days": 30,
+      "scheduled_days": 37,
+      "learning_steps": 0,
+      "review": "2027-08-10T08:10:00.000Z"
+    }
+  }
+]

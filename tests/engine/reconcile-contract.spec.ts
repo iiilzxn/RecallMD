@@ -54,9 +54,16 @@ describe("NOOP 不携带 next（AST_IDENTICAL）", () => {
     const first = await reconcileSnapshots({ snapshots: [{ relativePath: "a.md", text: docA }], registry: [] });
     const created = first.blockResults.filter((r) => r.action === "CREATE" && r.next);
     expect(created.length).toBe(2);
-    const registry = created.map((r) =>
-      reg(r.blockId, { ...r.next!, status: "ACTIVE", statusReason: null, hasRating: false, participation: "ENABLED" }),
-    );
+    const registry = created.map((r) => {
+      // next.blockId 可空（候选块），登记身份取提案 blockId
+      const { blockId: _omit, ...facts } = r.next!;
+      return reg(r.blockId, {
+        ...facts,
+        status: "ACTIVE",
+        hasRating: false,
+        participation: "ENABLED",
+      });
+    });
     const second = await reconcileSnapshots({
       snapshots: [{ relativePath: "a.md", text: docA }],
       registry,

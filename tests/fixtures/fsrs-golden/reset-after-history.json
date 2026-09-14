@@ -1,0 +1,51 @@
+[
+  {
+    "now": "2026-09-19T08:00:00.000Z",
+    "rating": "Good",
+    "before": {
+      "due": "2026-09-19T08:00:00.000Z",
+      "stability": 0,
+      "difficulty": 0,
+      "elapsed_days": 0,
+      "scheduled_days": 0,
+      "reps": 0,
+      "lapses": 0,
+      "learning_steps": 0,
+      "state": 0
+    },
+    "after": {
+      "due": "2026-09-19T08:10:00.000Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "elapsed_days": 0,
+      "scheduled_days": 0,
+      "reps": 1,
+      "lapses": 0,
+      "learning_steps": 1,
+      "state": 1,
+      "last_review": "2026-09-19T08:00:00.000Z"
+    },
+    "projections": {
+      "phase": "LEARNING",
+      "dueMs": 1789805400000,
+      "intervalMs": 600000,
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "reps": 1,
+      "lapses": 0
+    },
+    "log": {
+      "rating": 3,
+      "state": 0,
+      "due": "2026-09-19T08:00:00.000Z",
+      "stability": 0,
+      "difficulty": 0,
+      "elapsed_days": 0,
+      "last_elapsed_days": 0,
+      "scheduled_days": 0,
+      "learning_steps": 0,
+      "review": "2026-09-19T08:00:00.000Z"
+    },
+    "note": "重置后首评与 first-rating.json 的 Good 条目逐值一致（除时间平移）"
+  }
+]

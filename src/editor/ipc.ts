@@ -7,6 +7,8 @@ import { invoke } from "@tauri-apps/api/core";
 export interface HostErrorShape {
   code: string;
   message: string;
+  /** §14.1：可否安全重试（Rust HostError 序列化携带；M4 起有意义） */
+  retryable?: boolean;
   operationId?: string;
   path?: string;
 }
