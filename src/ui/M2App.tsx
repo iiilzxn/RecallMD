@@ -6,9 +6,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { ipc, type DraftDto, type HostErrorShape } from "../editor/ipc";
 import { indexIpc, type AnchorRepairOp, type RegistrySnapshot } from "../index/ipc";
 import { runIndexSync, runStartupSync, summarize, type SyncSummary } from "../index/sync";
+import { ExternalSync, type FsChangedPathPayload } from "../index/externalSync";
 import { reviewService } from "../review/runtime";
 import { ReviewPage } from "./ReviewPage";
 import { StatsPage } from "./StatsPage";
@@ -702,6 +704,76 @@ export function M2App() {
     };
   }, [wsInfo, showToast, refreshDue]);
 
+  // --- M7：外部变化编排（§13.3 Watcher + 60s/10min 核对 + overflow 全量重扫） ---
+  const extRef = useRef<ExternalSync | null>(null);
+  /** 同步后待落的 CONFLICT 标记（sync 会把 index_status 覆写回 READY，故顺序在后） */
+  const conflictMarkRef = useRef<string | null>(null);
+
+  const handleOpenFileExternal = useCallback(
+    async (rel: string): Promise<boolean> => {
+      const coord = coordRef.current;
+      if (!coord?.openFile || coord.openFile.relative.toLowerCase() !== rel.toLowerCase()) {
+        return true; // 非当前文件：直接重扫
+      }
+      const result = await coord
+        .checkExternal((text, lineEnding) => {
+          editorRef.current?.replaceDoc(text);
+          setEolState(lineEnding as EolState);
+        })
+        .catch(() => "none" as const);
+      if (result === "reloaded") showToast("磁盘文件有更新，已重新加载");
+      if (result === "conflict" || result === "gone") {
+        conflictMarkRef.current = rel;
+        setConflictOpen(true);
+      }
+      return true; // 磁盘版本照常重扫；CONFLICT 在 onSynced 之后落（挡评 §13.4 L901）
+    },
+    [showToast],
+  );
+
+  useEffect(() => {
+    if (!wsInfo) return;
+    const ext = new ExternalSync({
+      engine: () => engineRef.current,
+      onOpenFileChanged: handleOpenFileExternal,
+      onSynced: () => {
+        void refreshTree();
+        refreshDue();
+        void indexIpc
+          .registryRead()
+          .then((r) => {
+            lastRegistryRef.current = r;
+            setSyncSummary(summarize(r));
+          })
+          .catch(() => {});
+        const mark = conflictMarkRef.current;
+        if (mark) {
+          conflictMarkRef.current = null;
+          void indexIpc.markDocStatus(mark, "CONFLICT").catch(() => {});
+        }
+      },
+      onError: (m) => showToast(m),
+    });
+    extRef.current = ext;
+    ext.startTimers();
+    let un1: UnlistenFn | null = null;
+    let un2: UnlistenFn | null = null;
+    void listen<FsChangedPathPayload>("fs-changed", (e) => ext.handleFsChanged(e.payload)).then(
+      (f) => {
+        un1 = f;
+      },
+    );
+    void listen("fs-overflow", () => void ext.fullVerify()).then((f) => {
+      un2 = f;
+    });
+    return () => {
+      ext.stopTimers();
+      un1?.();
+      un2?.();
+      extRef.current = null;
+    };
+  }, [wsInfo, handleOpenFileExternal, showToast, refreshDue, refreshTree]);
+
   // --- M4：锚点修复（§9.4 L354–360 显式操作；preview→apply 走安全保存） ---
   const applyRepair = useCallback(
     async (op: AnchorRepairOp) => {
@@ -734,11 +806,12 @@ export function M2App() {
   const applyRepairRef = useRef(applyRepair);
   applyRepairRef.current = applyRepair;
 
-  // --- 外部变更 + 基础目录核对：窗口聚焦（§13.3 M2 简化） ---
+  // --- 外部变更 + 基础目录核对：窗口聚焦（§13.3；M7 加节流全库核对） ---
   useEffect(() => {
     const win = getCurrentWindow();
     const un = win.onFocusChanged(({ payload: focused }) => {
       if (!focused) return;
+      extRef.current?.focusPoke();
       const coord = coordRef.current;
       if (coord?.openFile) {
         void coord
@@ -748,6 +821,10 @@ export function M2App() {
           })
           .then((result) => {
             if (result === "reloaded") showToast("磁盘文件有更新，已重新加载");
+            if (result === "conflict" || result === "gone") {
+              conflictMarkRef.current = coord.openFile!.relative;
+              setConflictOpen(true);
+            }
           })
           .catch(() => {});
       }
@@ -1011,6 +1088,19 @@ export function M2App() {
       });
       setConflictOpen(false);
       showToast("已载入磁盘版本（本地草稿已留底）");
+      // 冲突解除：文档从 CONFLICT 回到待重扫（§13.4 L901 挡评解除）
+      const f = coordRef.current?.openFile;
+      if (f) {
+        await indexIpc.markDocStatus(f.relative, "PENDING").catch(() => {});
+        extRef.current?.handleFsChanged({
+          rel: f.relative,
+          hash: null,
+          size: null,
+          mtimeMs: null,
+          own: false,
+          dir: false,
+        });
+      }
     } catch (e) {
       showToast(`载入失败：${(e as HostErrorShape).message}`);
     }

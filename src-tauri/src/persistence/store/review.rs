@@ -1278,6 +1278,30 @@ fn count_group(conn: &Connection, now: i64, phase_filter: &str) -> HostResult<i6
         .map_err(|e| db_err(e, "队列计数"))
 }
 
+/// 三组计数单趟完成（§15.2：10k Block 下避免三连全 JOIN 扫描）
+fn count_groups(conn: &Connection, now: i64) -> HostResult<QueueCounts> {
+    conn.query_row(
+        "SELECT \
+           COALESCE(SUM(CASE WHEN r.phase IN ('LEARNING','RELEARNING') THEN 1 ELSE 0 END), 0), \
+           COALESCE(SUM(CASE WHEN r.phase = 'REVIEW' THEN 1 ELSE 0 END), 0), \
+           COALESCE(SUM(CASE WHEN r.phase = 'NEW' THEN 1 ELSE 0 END), 0) \
+         FROM ReviewState r \
+         JOIN KnowledgeBlock b ON b.block_id = r.block_id \
+         JOIN Document d ON d.document_id = b.document_id \
+         WHERE r.participation = 'ENABLED' AND r.next_review_at <= ?1 \
+           AND b.status = 'ACTIVE' AND d.status = 'PRESENT' AND d.index_status = 'READY'",
+        rusqlite::params![now],
+        |r| {
+            Ok(QueueCounts {
+                learning: r.get(0)?,
+                review: r.get(1)?,
+                new_total: r.get(2)?,
+            })
+        },
+    )
+    .map_err(|e| db_err(e, "队列计数"))
+}
+
 pub fn review_queue_on(conn: &Connection, page_size: Option<i64>) -> HostResult<ReviewQueueResult> {
     let now = now_ms();
     let page = page_size.unwrap_or(50).clamp(1, 200);
@@ -1294,11 +1318,7 @@ pub fn review_queue_on(conn: &Connection, page_size: Option<i64>) -> HostResult<
         (a.next_review_at, &a.block_id).cmp(&(b.next_review_at, &b.block_id))
     });
 
-    let counts = QueueCounts {
-        learning: count_group(conn, now, "'LEARNING','RELEARNING'")?,
-        review: count_group(conn, now, "'REVIEW'")?,
-        new_total: count_group(conn, now, "'NEW'")?,
-    };
+    let counts = count_groups(conn, now)?;
 
     let mut items = learning;
     items.extend(review);
@@ -1404,11 +1424,7 @@ pub fn review_stats_on(conn: &Connection) -> HostResult<ReviewStatsResult> {
         distinct_blocks_30d: distinct_30d,
         ratings_7d,
         ratings_30d,
-        due: QueueCounts {
-            learning: count_group(conn, now, "'LEARNING','RELEARNING'")?,
-            review: count_group(conn, now, "'REVIEW'")?,
-            new_total: count_group(conn, now, "'NEW'")?,
-        },
+        due: count_groups(conn, now)?,
         enabled,
         paused,
         excluded,

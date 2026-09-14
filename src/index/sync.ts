@@ -76,9 +76,12 @@ export async function runIndexSync(
       let read: ReadDocumentDto;
       try {
         read = await ipc.readDocument(rel);
-      } catch {
-        // FILE_NOT_FOUND：显式核实的缺失快照（§13.5 首次缺失设 MISSING）
-        snapshots.push({ relativePath: rel, text: null });
+      } catch (e) {
+        // §13.5 L909：只有显式核实"不存在"才算缺席快照（→ MARK_MISSING）；
+        // 权限拒绝/暂不可读等不得以"未扫描到"定论——完全不参与本轮（引擎 DEFER）
+        if ((e as { code?: string }).code === "FILE_NOT_FOUND") {
+          snapshots.push({ relativePath: rel, text: null });
+        }
         continue;
       }
       const report = await engine.analyze({

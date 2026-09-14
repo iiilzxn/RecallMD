@@ -29,6 +29,7 @@ export function buildCommitBatch(
     mtimeMs: f.read.mtimeMs,
     lineEnding: f.read.lineEnding,
     hasBom: f.read.hasBom,
+    fileIdentity: f.read.fileIdentity,
     diagnostics: f.report.diagnostics.map((d) => ({
       code: d.code,
       blockId: d.blockId ?? null,

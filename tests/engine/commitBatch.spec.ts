@@ -24,6 +24,7 @@ function fakeRead(hash: string): ReadDocumentDto {
     hasBom: false,
     lineEnding: "LF",
     mtimeMs: 1_700_000_000_000,
+    fileIdentity: null,
   };
 }
 

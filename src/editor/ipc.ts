@@ -20,6 +20,8 @@ export interface ReadDocumentDto {
   hasBom: boolean;
   lineEnding: "LF" | "CRLF" | "MIXED";
   mtimeMs: number;
+  /** M7：卷序列号+文件索引（外部移动采纳，§13.5；可空） */
+  fileIdentity: string | null;
 }
 
 export interface StatDocumentDto {

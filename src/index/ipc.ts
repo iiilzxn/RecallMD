@@ -21,6 +21,23 @@ export interface DocumentHeaderDto {
   lineEnding: string;
   hasBom: boolean;
   diagnostics: DiagnosticDto[];
+  /** M7：文件身份（外部移动采纳，§13.5） */
+  fileIdentity: string | null;
+}
+
+// --- M7 定期核对（§13.3 L885） ---
+
+export interface AuditStatDto {
+  rel: string;
+  byteSize: number;
+  mtimeMs: number;
+  fileIdentity: string | null;
+}
+
+export interface AuditHashWindowDto {
+  total: number;
+  offset: number;
+  files: { rel: string; hash: string | null; byteSize: number; mtimeMs: number }[];
 }
 
 export interface OccurrenceDto {
@@ -231,5 +248,14 @@ export const indexIpc = {
   },
   backupFullRestore(backupDir: string, targetRoot: string): Promise<FullRestoreResultDto> {
     return ipcCall<FullRestoreResultDto>("backup_full_restore", { backupDir, targetRoot });
+  },
+  auditQuick(): Promise<AuditStatDto[]> {
+    return ipcCall<AuditStatDto[]>("audit_quick", {});
+  },
+  auditHashBatch(offset: number, limit: number): Promise<AuditHashWindowDto> {
+    return ipcCall<AuditHashWindowDto>("audit_hash_batch", { offset, limit });
+  },
+  markDocStatus(relative: string, status: "CONFLICT" | "PENDING"): Promise<number> {
+    return ipcCall<number>("mark_doc_status", { relative, status });
   },
 };
