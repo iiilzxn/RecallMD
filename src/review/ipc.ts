@@ -113,6 +113,7 @@ export interface ReviewStatsResultDto {
   distinctBlocks7d: number;
   distinctBlocks30d: number;
   /** 下标 0..=3 = Again/Hard/Good/Easy */
+  ratingsToday: [number, number, number, number];
   ratings7d: [number, number, number, number];
   ratings30d: [number, number, number, number];
   due: QueueCountsDto;

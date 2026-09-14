@@ -183,6 +183,7 @@ pub struct ReviewStatsResult {
     pub distinct_blocks_7d: i64,
     pub distinct_blocks_30d: i64,
     /// 四 Rating 次数，下标 0..=3 对应 Again/Hard/Good/Easy（存值 1..=4）
+    pub ratings_today: [i64; 4],
     pub ratings_7d: [i64; 4],
     pub ratings_30d: [i64; 4],
     pub due: QueueCounts,
@@ -1391,7 +1392,7 @@ fn rate_window(
 pub fn review_stats_on(conn: &Connection) -> HostResult<ReviewStatsResult> {
     let now = now_ms();
     let (day_start, day_end) = local_day_window(now);
-    let (rated_today, _, _) = rate_window(conn, day_start, day_end)?;
+    let (rated_today, _, ratings_today) = rate_window(conn, day_start, day_end)?;
     let (rated_7d, distinct_7d, ratings_7d) =
         rate_window(conn, now - 7 * 86_400_000, now)?;
     let (rated_30d, distinct_30d, ratings_30d) =
@@ -1422,6 +1423,7 @@ pub fn review_stats_on(conn: &Connection) -> HostResult<ReviewStatsResult> {
         rated_30d,
         distinct_blocks_7d: distinct_7d,
         distinct_blocks_30d: distinct_30d,
+        ratings_today,
         ratings_7d,
         ratings_30d,
         due: count_groups(conn, now)?,

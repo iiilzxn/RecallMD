@@ -1185,3 +1185,28 @@ button.danger:hover:not(:disabled) {
 .settings-backups td:first-child {
   font-family: Consolas, monospace;
 }
+
+.stats-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  width: 100%;
+  max-width: 480px;
+}
+
+.stats-table th,
+.stats-table td {
+  text-align: left;
+  padding: 5px 10px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.stats-table thead th {
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.stats-table tbody td {
+  font-size: 15px;
+  font-weight: 600;
+  color: #0f766e;
+}

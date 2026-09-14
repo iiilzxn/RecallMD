@@ -60,16 +60,26 @@ export function StatsPage({ service }: { service: ReviewService }) {
               </section>
               <section className="stats-section">
                 <h3>四档自评分布（原始次数，不代表记忆率）</h3>
-                <div className="stats-grid">
-                  {RATING_NAMES.map((name, i) => (
-                    <Stat key={name} label={name} value={stats.ratings7d[i]} />
-                  ))}
-                </div>
-                <div className="stats-grid secondary">
-                  {RATING_NAMES.map((name, i) => (
-                    <Stat key={name} label={`${name}（30 天）`} value={stats.ratings30d[i]} />
-                  ))}
-                </div>
+                <table className="stats-table">
+                  <thead>
+                    <tr>
+                      <th>档位</th>
+                      <th>今天</th>
+                      <th>最近 7 天</th>
+                      <th>最近 30 天</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {RATING_NAMES.map((name, i) => (
+                      <tr key={name}>
+                        <th>{name}</th>
+                        <td>{stats.ratingsToday[i]}</td>
+                        <td>{stats.ratings7d[i]}</td>
+                        <td>{stats.ratings30d[i]}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </section>
             </>
           )}

@@ -203,6 +203,7 @@ fn m6_stats_count_only_rate_events() {
     assert_eq!(st.rated_30d, 3);
     assert_eq!(st.distinct_blocks_7d, 2);
     assert_eq!(st.ratings_7d, [1, 0, 1, 1]); // Again1 Good1 Easy1
+    assert_eq!(st.ratings_today, [1, 0, 1, 1], "今日分布=7 天分布（全在今天）");
     assert_eq!(st.paused, 1);
     assert_eq!(st.enabled, 1);
     assert_eq!(st.excluded, 0);
