@@ -408,6 +408,48 @@ fn review_reset_block(
     }
 }
 
+// --- 复习 UI 支撑（M6 §16） ---
+
+#[tauri::command]
+fn review_stats() -> HostResult<crate::persistence::store::review::ReviewStatsResult> {
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::ReviewStats)?
+    {
+        crate::persistence::store::DbReply::ReviewStats(r) => Ok(*r),
+        _ => unreachable!("ReviewStats 应答"),
+    }
+}
+
+#[tauri::command]
+fn app_config_read() -> HostResult<crate::persistence::store::review::AppConfigDto> {
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::AppConfigRead)?
+    {
+        crate::persistence::store::DbReply::AppConfig(c) => Ok(*c),
+        _ => unreachable!("AppConfigRead 应答"),
+    }
+}
+
+#[tauri::command]
+fn app_config_set(key: String, value: String) -> HostResult<()> {
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::AppConfigSet { key, value })?
+    {
+        crate::persistence::store::DbReply::Ack => Ok(()),
+        _ => unreachable!("AppConfigSet 应答"),
+    }
+}
+
+#[tauri::command]
+fn review_set_prompt(block_id: String, prompt: Option<String>) -> HostResult<()> {
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::ReviewSetPrompt { block_id, prompt })?
+    {
+        crate::persistence::store::DbReply::Ack => Ok(()),
+        _ => unreachable!("ReviewSetPrompt 应答"),
+    }
+}
+
 // HostError 实现 Serialize，Tauri 命令的 Err 会按 §14.1 类型化协议序列化给前端
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -454,7 +496,11 @@ pub fn run() {
             review_submit,
             review_queue,
             review_set_participation,
-            review_reset_block
+            review_reset_block,
+            review_stats,
+            app_config_read,
+            app_config_set,
+            review_set_prompt
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -31,8 +31,8 @@ use dto::{CommitIndexBatchRequest, CommitIndexBatchResult, RegistrySnapshot};
 use query::{registry_snapshot_on, RegistryQuery};
 use recovery::{RecoveryStatus, MODE_QUARANTINED_CORRUPT, MODE_REBUILT_NO_HISTORY};
 use review::{
-    ResetBlockResult, ReviewBeginResult, ReviewQueueResult, ReviewTokens, SubmitReviewRequest,
-    SubmitReviewResult,
+    AppConfigDto, ResetBlockResult, ReviewBeginResult, ReviewQueueResult, ReviewStatsResult,
+    ReviewTokens, SubmitReviewRequest, SubmitReviewResult,
 };
 
 pub const METADATA_DB: &str = "metadata.sqlite";
@@ -125,6 +125,17 @@ pub enum DbAction {
     },
     /// M5：单独重置（§10.3）
     ReviewResetBlock { block_id: String },
+    /// M6：简版统计（仅 RATE 计数）
+    ReviewStats,
+    /// M6：应用配置读（白名单键）
+    AppConfigRead,
+    /// M6：应用配置写（白名单键：review.daily_new_limit / editor.autosave）
+    AppConfigSet { key: String, value: String },
+    /// M6：块回忆提示（§5.2）
+    ReviewSetPrompt {
+        block_id: String,
+        prompt: Option<String>,
+    },
     /// 关闭工作线程（close_workspace 调用）
     Shutdown,
 }
@@ -146,7 +157,11 @@ impl DbAction {
             DbAction::ReviewBegin { .. }
             | DbAction::ReviewQueue { .. }
             | DbAction::ReviewSetParticipation { .. }
-            | DbAction::ReviewResetBlock { .. } => Duration::from_secs(15),
+            | DbAction::ReviewResetBlock { .. }
+            | DbAction::ReviewStats
+            | DbAction::AppConfigRead
+            | DbAction::AppConfigSet { .. }
+            | DbAction::ReviewSetPrompt { .. } => Duration::from_secs(15),
             DbAction::ReviewSubmit(_) => Duration::from_secs(30),
             DbAction::Shutdown => Duration::from_secs(10),
         }
@@ -167,6 +182,8 @@ pub enum DbReply {
     ReviewQueue(Box<ReviewQueueResult>),
     ReviewCount(u64),
     ReviewReset(Box<ResetBlockResult>),
+    ReviewStats(Box<ReviewStatsResult>),
+    AppConfig(Box<AppConfigDto>),
     Ack,
 }
 
@@ -667,6 +684,22 @@ fn dispatch(conn: &mut Connection, tokens: &mut ReviewTokens, action: DbAction) 
         DbAction::ReviewResetBlock { block_id } => {
             let result = review::reset_block_on(conn, &block_id)?;
             Ok(DbReply::ReviewReset(Box::new(result)))
+        }
+        DbAction::ReviewStats => {
+            let result = review::review_stats_on(conn)?;
+            Ok(DbReply::ReviewStats(Box::new(result)))
+        }
+        DbAction::AppConfigRead => {
+            let result = review::app_config_on(conn)?;
+            Ok(DbReply::AppConfig(Box::new(result)))
+        }
+        DbAction::AppConfigSet { key, value } => {
+            review::app_config_set_on(conn, &key, &value)?;
+            Ok(DbReply::Ack)
+        }
+        DbAction::ReviewSetPrompt { block_id, prompt } => {
+            review::set_prompt_on(conn, &block_id, prompt.as_deref())?;
+            Ok(DbReply::Ack)
         }
         DbAction::Shutdown => Ok(DbReply::Ack),
     }

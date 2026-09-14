@@ -134,6 +134,12 @@ pub struct QueueItem {
     pub needs_recheck: bool,
     /// 从未评分（占新卡配额；§10.2 L399 重置过的块不占）
     pub never_rated: bool,
+    /// 用户回忆提示（§5.2 可选；KnowledgeBlock.recall_prompt）
+    pub recall_prompt: Option<String>,
+    /// 揭示正文用：read_document 文本上的 LF/UTF-16 半开范围（§12.3）
+    pub start_offset: i64,
+    pub body_start_offset: i64,
+    pub end_offset: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -152,6 +158,8 @@ pub struct ReviewQueueResult {
     pub items: Vec<QueueItem>,
     pub counts: QueueCounts,
     pub quota: QuotaInfo,
+    /// 稍后到期（§10.2 L397"今日待复习"只算现在已到期；此为最早未到期时刻）
+    pub next_upcoming_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -161,6 +169,40 @@ pub struct ResetBlockResult {
     pub state_revision: i64,
     pub scheduled_due_at: i64,
 }
+
+// ---------------------------------------------------------------------------
+// 简版统计（§16 Statistics：原始分布，不推断记忆率；仅 RATE 计数 §12.5 L787）
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewStatsResult {
+    pub rated_today: i64,
+    pub rated_7d: i64,
+    pub rated_30d: i64,
+    pub distinct_blocks_7d: i64,
+    pub distinct_blocks_30d: i64,
+    /// 四 Rating 次数，下标 0..=3 对应 Again/Hard/Good/Easy（存值 1..=4）
+    pub ratings_7d: [i64; 4],
+    pub ratings_30d: [i64; 4],
+    pub due: QueueCounts,
+    pub enabled: i64,
+    pub paused: i64,
+    pub excluded: i64,
+}
+
+// ---------------------------------------------------------------------------
+// 应用配置（Settings 表白名单键；§16 Settings 页）
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppConfigDto {
+    pub daily_new_limit: i64,
+    pub autosave: bool,
+}
+
+pub const AUTOSAVE_KEY: &str = "editor.autosave";
 
 // ---------------------------------------------------------------------------
 // 复习令牌（DB 工作线程内单线程持有；worker 生命周期 = 工作区会话）
@@ -1160,7 +1202,8 @@ pub fn reset_block_on(conn: &mut Connection, block_id: &str) -> HostResult<Reset
 // ---------------------------------------------------------------------------
 
 const QUEUE_SQL_PREFIX: &str = "SELECT r.block_id, d.relative_path, b.title, \
-     b.heading_path_json, r.phase, r.next_review_at, r.needs_recheck, r.first_review_at \
+     b.heading_path_json, r.phase, r.next_review_at, r.needs_recheck, r.first_review_at, \
+     b.recall_prompt, b.start_offset, b.body_start_offset, b.end_offset \
      FROM ReviewState r \
      JOIN KnowledgeBlock b ON b.block_id = r.block_id \
      JOIN Document d ON d.document_id = b.document_id \
@@ -1204,6 +1247,10 @@ fn query_group(
                     needs_recheck: r.get::<_, i64>(6)? == 1,
                     // 行内实值（分组谓词已约束；两路合并后以此为准）
                     never_rated: first_review_at.is_none(),
+                    recall_prompt: r.get(8)?,
+                    start_offset: r.get(9)?,
+                    body_start_offset: r.get(10)?,
+                    end_offset: r.get(11)?,
                 },
                 heading_json,
             ))
@@ -1258,10 +1305,182 @@ pub fn review_queue_on(conn: &Connection, page_size: Option<i64>) -> HostResult<
     items.extend(new_all);
     items.truncate(page as usize);
 
+    // 稍后到期：最早的未到期时刻（§16 Review 空态"稍后有学习任务"）
+    let next_upcoming_at: Option<i64> = conn
+        .query_row(
+            "SELECT MIN(r.next_review_at) FROM ReviewState r \
+             JOIN KnowledgeBlock b ON b.block_id = r.block_id \
+             JOIN Document d ON d.document_id = b.document_id \
+             WHERE r.participation = 'ENABLED' AND r.next_review_at > ?1 \
+               AND b.status = 'ACTIVE' AND d.status = 'PRESENT' AND d.index_status = 'READY'",
+            rusqlite::params![now],
+            |r| r.get(0),
+        )
+        .map_err(|e| db_err(e, "稍后到期查询"))?;
+
     Ok(ReviewQueueResult {
         now_ms: now,
         items,
         counts,
         quota,
+        next_upcoming_at,
     })
+}
+
+// ---------------------------------------------------------------------------
+// 简版统计（§16/§12.5 L787：仅 event_type='RATE' 计数；不做记忆率推断）
+// ---------------------------------------------------------------------------
+
+fn rate_window(
+    conn: &Connection,
+    start: i64,
+    end: i64,
+) -> HostResult<(i64, i64, [i64; 4])> {
+    let (total, distinct): (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), COUNT(DISTINCT block_id) FROM ReviewHistory \
+             WHERE event_type = 'RATE' AND occurred_at >= ?1 AND occurred_at < ?2",
+            rusqlite::params![start, end],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|e| db_err(e, "统计评分窗口"))?;
+    let mut ratings = [0i64; 4];
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT rating, COUNT(*) FROM ReviewHistory \
+                 WHERE event_type = 'RATE' AND occurred_at >= ?1 AND occurred_at < ?2 \
+                 GROUP BY rating",
+            )
+            .map_err(|e| db_err(e, "统计分布准备"))?;
+        let rows = stmt
+            .query_map(rusqlite::params![start, end], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+            })
+            .map_err(|e| db_err(e, "统计分布"))?;
+        for row in rows {
+            let (rating, n) = row.map_err(|e| db_err(e, "统计分布"))?;
+            if (1..=4).contains(&rating) {
+                ratings[(rating - 1) as usize] = n;
+            }
+        }
+    }
+    Ok((total, distinct, ratings))
+}
+
+pub fn review_stats_on(conn: &Connection) -> HostResult<ReviewStatsResult> {
+    let now = now_ms();
+    let (day_start, day_end) = local_day_window(now);
+    let (rated_today, _, _) = rate_window(conn, day_start, day_end)?;
+    let (rated_7d, distinct_7d, ratings_7d) =
+        rate_window(conn, now - 7 * 86_400_000, now)?;
+    let (rated_30d, distinct_30d, ratings_30d) =
+        rate_window(conn, now - 30 * 86_400_000, now)?;
+    let mut enabled = 0;
+    let mut paused = 0;
+    let mut excluded = 0;
+    {
+        let mut stmt = conn
+            .prepare("SELECT participation, COUNT(*) FROM ReviewState GROUP BY participation")
+            .map_err(|e| db_err(e, "参与统计准备"))?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+            .map_err(|e| db_err(e, "参与统计"))?;
+        for row in rows {
+            let (p, n) = row.map_err(|e| db_err(e, "参与统计"))?;
+            match p.as_str() {
+                "ENABLED" => enabled = n,
+                "PAUSED" => paused = n,
+                "EXCLUDED" => excluded = n,
+                _ => {}
+            }
+        }
+    }
+    Ok(ReviewStatsResult {
+        rated_today,
+        rated_7d,
+        rated_30d,
+        distinct_blocks_7d: distinct_7d,
+        distinct_blocks_30d: distinct_30d,
+        ratings_7d,
+        ratings_30d,
+        due: QueueCounts {
+            learning: count_group(conn, now, "'LEARNING','RELEARNING'")?,
+            review: count_group(conn, now, "'REVIEW'")?,
+            new_total: count_group(conn, now, "'NEW'")?,
+        },
+        enabled,
+        paused,
+        excluded,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// 应用配置（白名单键写入；§16 Settings）
+// ---------------------------------------------------------------------------
+
+pub fn app_config_on(conn: &Connection) -> HostResult<AppConfigDto> {
+    let autosave = query::settings_get(conn, AUTOSAVE_KEY)?
+        .map(|v| v == "1")
+        .unwrap_or(true);
+    Ok(AppConfigDto {
+        daily_new_limit: daily_new_limit(conn)?,
+        autosave,
+    })
+}
+
+pub fn app_config_set_on(conn: &Connection, key: &str, value: &str) -> HostResult<()> {
+    match key {
+        "review.daily_new_limit" => {
+            let n: i64 = value
+                .parse()
+                .map_err(|_| rejected(format!("新内容日配额须为 0–100 整数（得到 {value:?}）")))?;
+            if !(0..=100).contains(&n) {
+                return Err(rejected(format!("新内容日配额须为 0–100（得到 {n}）")));
+            }
+        }
+        "editor.autosave" => {
+            if value != "0" && value != "1" {
+                return Err(rejected(format!("自动保存开关须为 0/1（得到 {value:?}）")));
+            }
+        }
+        other => {
+            return Err(rejected(format!("不可写设置键 {other:?}")));
+        }
+    }
+    query::settings_set_string(conn, key, value, now_ms())
+}
+
+// ---------------------------------------------------------------------------
+// 块提示（§5.2 可选 recall_prompt；题面变化使令牌失效 §10.4）
+// ---------------------------------------------------------------------------
+
+pub fn set_prompt_on(conn: &mut Connection, block_id: &str, prompt: Option<&str>) -> HostResult<()> {
+    if let Some(p) = prompt {
+        if p.chars().count() > 200 {
+            return Err(rejected("回忆提示最长 200 字符"));
+        }
+    }
+    let now = now_ms();
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| db_err(e, "开启事务"))?;
+    let changed = tx
+        .execute(
+            "UPDATE KnowledgeBlock SET recall_prompt = ?1, updated_at = ?2 WHERE block_id = ?3",
+            rusqlite::params![prompt, now, block_id],
+        )
+        .map_err(|e| db_err(e, "更新块提示"))?;
+    if changed == 0 {
+        return Err(rejected(format!("块 {block_id} 未登记")));
+    }
+    // 题面变化 → 进行中的评分会话失效（不写历史事件，§12.5 L766 允许无事件递增）
+    tx.execute(
+        "UPDATE ReviewState SET state_revision = state_revision + 1, updated_at = ?1 \
+         WHERE block_id = ?2",
+        rusqlite::params![now, block_id],
+    )
+    .map_err(|e| db_err(e, "提示变更使会话失效"))?;
+    tx.commit().map_err(|e| db_err(e, "提交提示事务"))?;
+    Ok(())
 }
