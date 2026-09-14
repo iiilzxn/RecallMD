@@ -38,11 +38,11 @@ export class ExternalSync {
     string,
     { hash: string | null; own: boolean; dir: boolean }
   >();
-  private flushTimer: number | null = null;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private syncing = false;
   private rerunAfterSync = false;
-  private quickTimer: number | null = null;
-  private rollingTimer: number | null = null;
+  private quickTimer: ReturnType<typeof setInterval> | null = null;
+  private rollingTimer: ReturnType<typeof setInterval> | null = null;
   private rollingOffset = 0;
   private lastQuickAt = 0;
 
@@ -52,8 +52,8 @@ export class ExternalSync {
 
   handleFsChanged(p: FsChangedPathPayload): void {
     this.pending.set(p.rel, { hash: p.hash, own: p.own, dir: p.dir });
-    if (this.flushTimer != null) window.clearTimeout(this.flushTimer);
-    this.flushTimer = window.setTimeout(() => {
+    if (this.flushTimer != null) clearTimeout(this.flushTimer);
+    this.flushTimer = setTimeout(() => {
       this.flushTimer = null;
       void this.flush();
     }, FLUSH_DEBOUNCE_MS);
@@ -210,14 +210,14 @@ export class ExternalSync {
 
   startTimers(): void {
     this.stopTimers();
-    this.quickTimer = window.setInterval(() => void this.quick(), QUICK_INTERVAL_MS);
-    this.rollingTimer = window.setInterval(() => void this.rollingTick(), ROLLING_INTERVAL_MS);
+    this.quickTimer = setInterval(() => void this.quick(), QUICK_INTERVAL_MS);
+    this.rollingTimer = setInterval(() => void this.rollingTick(), ROLLING_INTERVAL_MS);
   }
 
   stopTimers(): void {
-    if (this.quickTimer != null) window.clearInterval(this.quickTimer);
-    if (this.rollingTimer != null) window.clearInterval(this.rollingTimer);
-    if (this.flushTimer != null) window.clearTimeout(this.flushTimer);
+    if (this.quickTimer != null) clearInterval(this.quickTimer);
+    if (this.rollingTimer != null) clearInterval(this.rollingTimer);
+    if (this.flushTimer != null) clearTimeout(this.flushTimer);
     this.quickTimer = null;
     this.rollingTimer = null;
     this.flushTimer = null;
