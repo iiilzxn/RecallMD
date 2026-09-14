@@ -164,6 +164,8 @@ pub struct DocumentHeaderDto {
     pub line_ending: String,
     pub has_bom: bool,
     pub diagnostics: Vec<DiagnosticDto>,
+    /// M7：文件身份（外部移动采纳二级优先级，§13.5）
+    pub file_identity: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

@@ -58,6 +58,8 @@ pub struct ReadDocumentResult {
     /// "LF" | "CRLF" | "MIXED"
     pub line_ending: String,
     pub mtime_ms: i64,
+    /// M7：卷序列号+文件索引（外部移动识别，§13.5；可空）
+    pub file_identity: Option<String>,
 }
 
 fn detect_line_ending(b: &[u8]) -> &'static str {
@@ -131,6 +133,7 @@ pub fn read_document(root: &str, relative: &str) -> HostResult<ReadDocumentResul
         has_bom,
         line_ending: line_ending.to_string(),
         mtime_ms,
+        file_identity: super::audit::file_identity_of(&abs),
     })
 }
 

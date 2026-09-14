@@ -470,6 +470,21 @@ fn mark_doc_status(relative: String, status: String) -> HostResult<u64> {
     }
 }
 
+// --- M7：定期核对（§13.3 L885；纯文件系统，不经 DB 线程） ---
+
+#[tauri::command]
+fn audit_quick() -> HostResult<Vec<crate::persistence::audit::AuditStatDto>> {
+    crate::persistence::audit::audit_quick(&crate::persistence::workspace::active_root()?)
+}
+
+#[tauri::command]
+fn audit_hash_batch(
+    offset: usize,
+    limit: usize,
+) -> HostResult<crate::persistence::audit::AuditHashWindowDto> {
+    crate::persistence::audit::audit_hash_batch(&crate::persistence::workspace::active_root()?, offset, limit)
+}
+
 // HostError 实现 Serialize，Tauri 命令的 Err 会按 §14.1 类型化协议序列化给前端
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -521,7 +536,9 @@ pub fn run() {
             app_config_read,
             app_config_set,
             review_set_prompt,
-            mark_doc_status
+            mark_doc_status,
+            audit_quick,
+            audit_hash_batch
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

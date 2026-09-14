@@ -69,8 +69,7 @@ struct ReviewRow {
     needs_recheck: bool,
 }
 
-fn load_live_doc(tx: &Transaction, workspace_id: &str, path_key: &str) -> HostResult<Option<DocRow>> {
-    tx.query_row(
+fn load_live_doc(tx: &Transaction, workspace_id: &str, path_key: &str) -> HostResult<Option<DocRow>> {    tx.query_row(
         "SELECT document_id, index_revision, status, index_status, content_hash, \
          parser_version, diagnostics_json \
          FROM Document WHERE workspace_id = ?1 AND path_key = ?2 AND status <> 'DELETED'",
@@ -93,6 +92,97 @@ fn load_live_doc(tx: &Transaction, workspace_id: &str, path_key: &str) -> HostRe
         other => Err(other),
     })
     .map_err(|e| sqlx(e, "读取 Document"))
+}
+
+/// M7 外部移动采纳（§13.5 L905 识别优先级）：
+/// ② 经核实的 Windows 文件身份一对一（卷序列号+文件索引）；
+/// ③ 同轮扫描中"旧路径确认缺席 + 新路径字节 hash 唯一相等"。
+/// 多候选/无候选一律不采纳（禁止猜配）；批内路径不参与（副本场景旧路径仍在）。
+#[allow(clippy::too_many_arguments)]
+fn try_adopt(
+    tx: &Transaction,
+    workspace_id: &str,
+    header: &DocumentHeaderDto,
+    batch_keys: &std::collections::HashSet<String>,
+    absent_keys: &std::collections::HashSet<String>,
+    _now: i64,
+) -> HostResult<Option<DocRow>> {
+    let load_row = |document_id: &str| -> HostResult<Option<DocRow>> {
+        tx.query_row(
+            "SELECT document_id, index_revision, status, index_status, content_hash, \
+             parser_version, diagnostics_json \
+             FROM Document WHERE document_id = ?1 AND status <> 'DELETED'",
+            rusqlite::params![document_id],
+            |r| {
+                Ok(DocRow {
+                    document_id: r.get(0)?,
+                    index_revision: r.get(1)?,
+                    status: r.get(2)?,
+                    index_status: r.get(3)?,
+                    content_hash: r.get(4)?,
+                    parser_version: r.get(5)?,
+                    diagnostics_json: r.get(6)?,
+                })
+            },
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(sqlx(other, "移动采纳：装载候选行")),
+        })
+    };
+    // ② 文件身份一对一
+    if let Some(identity) = &header.file_identity {
+        let mut stmt = tx
+            .prepare(
+                "SELECT document_id, path_key FROM Document \
+                 WHERE workspace_id = ?1 AND file_identity = ?2 AND status <> 'DELETED'",
+            )
+            .map_err(|e| sqlx(e, "移动采纳：身份查询"))?;
+        let rows: Vec<(String, String)> = stmt
+            .query_map(rusqlite::params![workspace_id, identity], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .map_err(|e| sqlx(e, "移动采纳：身份查询"))?
+            .collect::<Result<_, _>>()
+            .map_err(|e| sqlx(e, "移动采纳：身份查询"))?;
+        let candidates: Vec<String> = rows
+            .into_iter()
+            .filter(|(_, key)| !batch_keys.contains(key))
+            .map(|(id, _)| id)
+            .collect();
+        if candidates.len() == 1 {
+            if let Some(row) = load_row(&candidates[0])? {
+                return Ok(Some(row));
+            }
+        }
+    }
+    // ③ 缺席旧路径 + 唯一 hash 相等
+    let mut stmt = tx
+        .prepare(
+            "SELECT document_id, path_key FROM Document \
+             WHERE workspace_id = ?1 AND status <> 'DELETED' AND content_hash = ?2",
+        )
+        .map_err(|e| sqlx(e, "移动采纳：hash 查询"))?;
+    let rows: Vec<(String, String)> = stmt
+        .query_map(
+            rusqlite::params![workspace_id, header.observed_hash],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|e| sqlx(e, "移动采纳：hash 查询"))?
+        .collect::<Result<_, _>>()
+        .map_err(|e| sqlx(e, "移动采纳：hash 查询"))?;
+    let candidates: Vec<String> = rows
+        .into_iter()
+        .filter(|(_, key)| absent_keys.contains(key) && !batch_keys.contains(key))
+        .map(|(id, _)| id)
+        .collect();
+    if candidates.len() == 1 {
+        if let Some(row) = load_row(&candidates[0])? {
+            return Ok(Some(row));
+        }
+    }
+    Ok(None)
 }
 
 fn load_block(tx: &Transaction, block_id: &str) -> HostResult<Option<BlockRow>> {
@@ -159,6 +249,9 @@ struct DocPlan {
     dirty: std::cell::Cell<bool>,
     /// 新插入文档的 id（写入阶段回填；块写入阶段读取）
     new_id: Option<String>,
+    /// M7 外部移动采纳（§13.5）：新路径沿用了旧行的 document_id；
+    /// TS 按新路径送 expected=0，CAS 容忍该差异（revision = 旧行+1）
+    adopted: std::cell::Cell<bool>,
 }
 
 impl DocPlan {
@@ -255,6 +348,26 @@ pub fn commit_on(
     let paused_creates = is_history_loss_mode(&recovery_mode);
 
     // ---- Phase 1：装载文档行 + CAS（§12.5：expectedIndexRevision）----
+    // M7：新路径先尝试外部移动采纳（§13.5 身份优先级 2/3），命中则旧行迁至新
+    // 路径（保留 document_id 与学习历史），本批按 existing 更新且 CAS 容忍 0。
+    let snapshot_set: std::collections::HashSet<&str> =
+        req.snapshot_paths.iter().map(String::as_str).collect();
+    let batch_keys: std::collections::HashSet<String> = req
+        .documents
+        .iter()
+        .map(|h| super::dto::path_key_of(&h.relative_path))
+        .collect();
+    // 本轮"扫描过且确认缺席"的路径（无 header = 读取失败/不存在；§13.5 移走侧）
+    let absent_keys: std::collections::HashSet<String> = req
+        .snapshot_paths
+        .iter()
+        .filter(|p| {
+            let key = super::dto::path_key_of(p);
+            !batch_keys.contains(&key)
+        })
+        .map(|p| super::dto::path_key_of(p))
+        .collect();
+
     let mut docs: Vec<DocPlan> = Vec::with_capacity(req.documents.len());
     for header in &req.documents {
         let path_key = super::dto::path_key_of(&header.relative_path);
@@ -262,6 +375,43 @@ pub fn commit_on(
             return Err(idx(format!("批内路径重复：{}", header.relative_path)));
         }
         let existing = load_live_doc(&tx, &workspace_id, &path_key)?;
+        let adopted_row = if existing.is_none() && header.expected_index_revision == 0 {
+            try_adopt(
+                &tx,
+                &workspace_id,
+                header,
+                &batch_keys,
+                &absent_keys,
+                now,
+            )?
+        } else {
+            None
+        };
+        if let Some(adopted) = adopted_row {
+            // 旧行迁至新路径：路径/状态即刻接管，索引字段由本批 3a 阶段重写
+            tx.execute(
+                "UPDATE Document SET relative_path = ?1, path_key = ?2, status = 'PRESENT', \
+                 missing_since = NULL, updated_at = ?3 WHERE document_id = ?4",
+                rusqlite::params![
+                    header.relative_path,
+                    path_key,
+                    now,
+                    adopted.document_id
+                ],
+            )
+            .map_err(|e| sqlx(e, "移动采纳：迁移文档行"))?;
+            let row = load_live_doc(&tx, &workspace_id, &path_key)?
+                .ok_or_else(|| idx("移动采纳：重载文档行失败"))?;
+            docs.push(DocPlan {
+                path_key,
+                header: header.clone(),
+                existing: Some(row),
+                dirty: std::cell::Cell::new(true),
+                new_id: None,
+                adopted: std::cell::Cell::new(true),
+            });
+            continue;
+        }
         match &existing {
             Some(row) => {
                 if header.expected_index_revision != row.index_revision {
@@ -294,11 +444,9 @@ pub fn commit_on(
             existing,
             dirty: std::cell::Cell::new(false),
             new_id: None,
+            adopted: std::cell::Cell::new(false),
         });
     }
-
-    let snapshot_set: std::collections::HashSet<&str> =
-        req.snapshot_paths.iter().map(String::as_str).collect();
 
     // ---- Phase 2：推演（零写入）----
     let mut planned: Vec<Planned> = Vec::with_capacity(req.block_results.len());
@@ -331,6 +479,7 @@ pub fn commit_on(
                 "UPDATE Document SET status = 'PRESENT', index_status = 'READY', \
                  observed_hash = ?1, content_hash = ?1, byte_size = ?2, disk_mtime_at = ?3, \
                  line_ending = ?4, has_bom = ?5, parser_version = ?6, diagnostics_json = ?7, \
+                 file_identity = ?10, \
                  index_revision = index_revision + 1, updated_at = ?8, last_seen_at = ?8, \
                  missing_since = NULL, deleted_at = NULL \
                  WHERE document_id = ?9",
@@ -344,6 +493,7 @@ pub fn commit_on(
                     diag_json,
                     now,
                     row.document_id,
+                    header.file_identity,
                 ],
             )
             .map_err(|e| sqlx(e, "更新 Document"))?;
@@ -354,9 +504,9 @@ pub fn commit_on(
                 "INSERT INTO Document (document_id, workspace_id, relative_path, path_key, \
                  status, index_status, encoding, line_ending, has_bom, observed_hash, \
                  content_hash, byte_size, disk_mtime_at, index_revision, parser_version, \
-                 diagnostics_json, created_at, updated_at, last_seen_at) \
+                 diagnostics_json, file_identity, created_at, updated_at, last_seen_at) \
                  VALUES (?1, ?2, ?3, ?4, 'PRESENT', 'READY', 'UTF-8', ?5, ?6, ?7, ?7, ?8, \
-                 ?9, 1, ?10, ?11, ?12, ?12, ?12)",
+                 ?9, 1, ?10, ?11, ?13, ?12, ?12, ?12)",
                 rusqlite::params![
                     new_id,
                     workspace_id,
@@ -370,6 +520,7 @@ pub fn commit_on(
                     header.parser_version,
                     diag_json,
                     now,
+                    header.file_identity,
                 ],
             )
             .map_err(|e| sqlx(e, "插入 Document"))?;

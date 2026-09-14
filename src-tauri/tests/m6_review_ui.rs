@@ -78,6 +78,7 @@ fn seed_block(conn: &mut Connection, block_id: &str, path: &str, body_tag: &str,
             line_ending: "LF".into(),
             has_bom: false,
             diagnostics: vec![],
+            file_identity: None,
         }],
         block_results: vec![BlockProposalDto {
             block_id: block_id.into(),

@@ -60,6 +60,7 @@ fn header(path: &str, rev: i64, hash: &str) -> DocumentHeaderDto {
         line_ending: "LF".into(),
         has_bom: false,
         diagnostics: vec![],
+        file_identity: None,
     }
 }
 
