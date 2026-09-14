@@ -238,9 +238,22 @@ export class SaveCoordinator {
       await this.writeDraftQuietly();
       return;
     }
+    // 设置页开关（M6）：关闭时只写草稿兜底，不自动落盘；Ctrl+S 手动路径不受影响
+    if (!this.autosaveEnabled) {
+      if (this.isDirty()) await this.writeDraftQuietly();
+      return;
+    }
     if (this.isDirty() || this.pendingSave) {
       await this.saveNow("auto");
     }
+  }
+
+  // --- 自动保存开关（M6 设置页；草稿兜底不受开关影响） ---
+
+  private autosaveEnabled = true;
+
+  setAutosaveEnabled(enabled: boolean): void {
+    this.autosaveEnabled = enabled;
   }
 
   // --- 保存核心 ---

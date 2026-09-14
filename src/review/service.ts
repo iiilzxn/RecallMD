@@ -17,9 +17,12 @@ import {
 } from "./scheduler";
 import {
   reviewIpc,
+  type AppConfigDto,
+  type AppConfigKey,
   type ParticipationAction,
   type ReviewBeginResultDto,
   type ReviewQueueResultDto,
+  type ReviewStatsResultDto,
   type ResetBlockResultDto,
   type SubmitReviewRequestDto,
   type SubmitReviewResultDto,
@@ -41,6 +44,11 @@ export interface SubmitAction {
   contextUsed?: boolean;
   /** 揭示→点击的答题时长（毫秒；调用方用同一 Clock 计时） */
   durationMs?: number | null;
+  /**
+   * 结果未明（超时/中断）后的重试须复用同一 requestId（§10.4 L430）；
+   * 传入即复用。新动作不传，内部生成。
+   */
+  requestId?: string;
 }
 
 /** DB_BUSY 等可重试错误重试一次（§14.1 有界重试） */
@@ -60,12 +68,33 @@ function defaultNewRequestId(): string {
 export class ReviewService {
   constructor(private readonly deps: ReviewServiceDeps) {}
 
+  /** 统一时钟读数（UI 计时/展示用它，不直接 Date.now） */
+  now(): number {
+    return this.deps.clock.nowMs();
+  }
+
   queue(pageSize?: number): Promise<ReviewQueueResultDto> {
     return this.deps.ipc.reviewQueue(pageSize);
   }
 
   begin(blockId: string): Promise<ReviewBeginResultDto> {
     return this.deps.ipc.reviewBegin(blockId);
+  }
+
+  stats(): Promise<ReviewStatsResultDto> {
+    return this.deps.ipc.reviewStats();
+  }
+
+  appConfig(): Promise<AppConfigDto> {
+    return this.deps.ipc.appConfigRead();
+  }
+
+  setAppConfig(key: AppConfigKey, value: string): Promise<void> {
+    return this.deps.ipc.appConfigSet(key, value);
+  }
+
+  setPrompt(blockId: string, prompt: string | null): Promise<void> {
+    return this.deps.ipc.reviewSetPrompt(blockId, prompt);
   }
 
   /** 四间隔预览（§10.4：仅展示；提交时另取新 now 重算） */
@@ -79,7 +108,7 @@ export class ReviewService {
       throw new ClockAnomaly(sanity.regressionMs);
     }
     const nowMs = this.deps.clock.nowMs();
-    const requestId = (this.deps.newRequestId ?? defaultNewRequestId)();
+    const requestId = action.requestId ?? (this.deps.newRequestId ?? defaultNewRequestId)();
     // §10.3：重学从空状态评新正文；沿用原算法状态评当前正文
     const envelope =
       action.changeResolution === "RESET"

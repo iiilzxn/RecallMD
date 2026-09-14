@@ -10,6 +10,9 @@ import { ipc, type DraftDto, type HostErrorShape } from "../editor/ipc";
 import { indexIpc, type AnchorRepairOp, type RegistrySnapshot } from "../index/ipc";
 import { runIndexSync, runStartupSync, summarize, type SyncSummary } from "../index/sync";
 import { reviewService } from "../review/runtime";
+import { ReviewPage } from "./ReviewPage";
+import { StatsPage } from "./StatsPage";
+import { SettingsPage } from "./SettingsPage";
 import { SaveCoordinator, type CoordinatorState } from "../editor/SaveCoordinator";
 import { EditorController, type CursorInfo, type SystemEdit } from "../editor/EditorController";
 import { EngineClient } from "../engine/workerClient";
@@ -292,6 +295,21 @@ export function M2App() {
     };
   }, []);
 
+  // --- M6：页面视图与到期角标 ---
+  const [view, setView] = useState<"editor" | "review" | "stats" | "settings">("editor");
+  const [dueBadge, setDueBadge] = useState<{ count: number; upcoming: number | null } | null>(null);
+  const refreshDue = useCallback(() => {
+    reviewService()
+      .queue(1)
+      .then((q) =>
+        setDueBadge({
+          count: q.counts.learning + q.counts.review + q.counts.newTotal,
+          upcoming: q.nextUpcomingAt,
+        }),
+      )
+      .catch(() => setDueBadge(null));
+  }, []);
+
   // --- 启动：查询已激活 workspace 与最近列表 ---
   useEffect(() => {
     void (async () => {
@@ -307,13 +325,15 @@ export function M2App() {
     })();
   }, []);
 
-  // --- M5：复习服务桥（CDP 验收驱动入口；M6 Review UI 落地后由页面取代） ---
+  // workspace 可用后：到期角标 + 自动保存配置（M6 设置）
   useEffect(() => {
     if (!wsInfo) return;
-    (window as unknown as { __recallmd?: { review: unknown } }).__recallmd = {
-      review: reviewService(),
-    };
-  }, [wsInfo]);
+    refreshDue();
+    reviewService()
+      .appConfig()
+      .then((c) => coordRef.current?.setAutosaveEnabled(c.autosave))
+      .catch(() => undefined);
+  }, [wsInfo, refreshDue]);
 
   // --- 目录树数据 ---
   const loadDir = useCallback(async (dir: string) => {
@@ -666,6 +686,7 @@ export function M2App() {
         if (cancelled) return;
         setSyncSummary(r.summary);
         setRecoveryMode(r.recoveryMode);
+        refreshDue();
       })
       .catch((e) => {
         if (cancelled) return;
@@ -679,7 +700,7 @@ export function M2App() {
     return () => {
       cancelled = true;
     };
-  }, [wsInfo, showToast]);
+  }, [wsInfo, showToast, refreshDue]);
 
   // --- M4：锚点修复（§9.4 L354–360 显式操作；preview→apply 走安全保存） ---
   const applyRepair = useCallback(
@@ -1126,30 +1147,63 @@ export function M2App() {
             />
           )}
         </div>
+        {wsInfo && (
+          <nav className="sidebar-nav">
+            <button
+              type="button"
+              className={`nav-row${view === "review" ? " active" : ""}`}
+              onClick={() => {
+                setView(view === "review" ? "editor" : "review");
+                refreshDue();
+              }}
+            >
+              <span>今日待复习</span>
+              {dueBadge && dueBadge.count > 0 && (
+                <span className="nav-badge">{dueBadge.count}</span>
+              )}
+            </button>
+            <button
+              type="button"
+              className={`nav-row${view === "stats" ? " active" : ""}`}
+              onClick={() => setView(view === "stats" ? "editor" : "stats")}
+            >
+              <span>统计</span>
+            </button>
+            <button
+              type="button"
+              className={`nav-row${view === "settings" ? " active" : ""}`}
+              onClick={() => setView(view === "settings" ? "editor" : "settings")}
+            >
+              <span>设置</span>
+            </button>
+          </nav>
+        )}
       </aside>
 
       <div className="main-col">
-        <header className="topbar">
-          <span className="file-path" title={fileInfo ? `${fileInfo.root}\\${fileInfo.relative}` : ""}>
-            {fileInfo ? fileInfo.relative : "未打开文件"}
-          </span>
-          <span className="spacer" />
-          <button
-            disabled={!fileInfo || engineDead || status === "conflict"}
-            title="为当前文件的复习块插入 ID 锚点并保存"
-            onClick={() => void handleInclude()}
-          >
-            纳入复习
-          </button>
-          <button
-            disabled={!canEdit || status === "saving"}
-            onClick={() => void handleSave()}
-          >
-            保存 (Ctrl+S)
-          </button>
-        </header>
+        {view === "editor" && (
+          <header className="topbar">
+            <span className="file-path" title={fileInfo ? `${fileInfo.root}\\${fileInfo.relative}` : ""}>
+              {fileInfo ? fileInfo.relative : "未打开文件"}
+            </span>
+            <span className="spacer" />
+            <button
+              disabled={!fileInfo || engineDead || status === "conflict"}
+              title="为当前文件的复习块插入 ID 锚点并保存"
+              onClick={() => void handleInclude()}
+            >
+              纳入复习
+            </button>
+            <button
+              disabled={!canEdit || status === "saving"}
+              onClick={() => void handleSave()}
+            >
+              保存 (Ctrl+S)
+            </button>
+          </header>
+        )}
 
-        {wsInfo && banner && (
+        {view === "editor" && wsInfo && banner && (
           <div className="banner banner-error">
             <span>{banner.message}</span>
             <span className="banner-note">
@@ -1159,7 +1213,7 @@ export function M2App() {
           </div>
         )}
 
-        {canEdit && eolState === "MIXED" && (
+        {view === "editor" && canEdit && eolState === "MIXED" && (
           <div className="banner banner-warn">
             <span>此文件混合使用 LF 与 CRLF 换行，保存前需统一（选择后自动保存一次）</span>
             <button onClick={() => normalizeEol("LF")}>统一为 LF</button>
@@ -1167,9 +1221,9 @@ export function M2App() {
           </div>
         )}
 
-        <div className="editor-area">
+        <div className={`editor-area${view === "editor" ? "" : " is-hidden"}`}>
           <div className="editor-shell" ref={hostRef} />
-          {wsInfo && fileInfo === null && !banner && (
+          {wsInfo && fileInfo === null && !banner && view === "editor" && (
             <div className="welcome">
               <h2>从左侧选择一个文件开始</h2>
               <p>
@@ -1179,6 +1233,26 @@ export function M2App() {
             </div>
           )}
         </div>
+
+        {view !== "editor" && (
+          <div className="page-mount">
+            {view === "review" && (
+              <ReviewPage
+                service={reviewService()}
+                onExit={() => setView("editor")}
+                onDueChanged={refreshDue}
+              />
+            )}
+            {view === "stats" && <StatsPage service={reviewService()} />}
+            {view === "settings" && (
+              <SettingsPage
+                service={reviewService()}
+                workspaceRoot={wsInfo?.root ?? ""}
+                onAutosaveChanged={(v) => coordRef.current?.setAutosaveEnabled(v)}
+              />
+            )}
+          </div>
+        )}
 
         {recoveryMode && recoveryMode !== "CLEARED" && (
           <div className={`recover-banner ${recoveryMode === "OFFLINE" ? "bad" : ""}`}>

@@ -171,4 +171,53 @@ describe("M5 ReviewService.submit", () => {
     expect(calls).toHaveLength(2);
     expect(calls[0]).toEqual(calls[1]);
   });
+
+  it("外部传入 requestId 时复用（结果未明的重试场景，§10.4）", async () => {
+    const { service, calls } = makeService([{}]);
+    await service.submit({ ...action(), requestId: "reuse-me" });
+    expect(calls[0].requestId).toBe("reuse-me");
+  });
+
+  it("stats/appConfig/setPrompt 透传到 ipc", async () => {
+    const seen: string[] = [];
+    const ipc = {
+      reviewBegin: async () => beginResult(),
+      reviewSubmit: async () => {
+        throw new Error("unused");
+      },
+      reviewQueue: async () => {
+        throw new Error("unused");
+      },
+      reviewSetParticipation: async () => 1,
+      reviewResetBlock: async () => ({ blockId: "b", stateRevision: 1, scheduledDueAt: T0 }),
+      reviewStats: async () => {
+        seen.push("stats");
+        return {
+          ratedToday: 0, rated7d: 0, rated30d: 0,
+          distinctBlocks7d: 0, distinctBlocks30d: 0,
+          ratings7d: [0, 0, 0, 0], ratings30d: [0, 0, 0, 0],
+          due: { learning: 0, review: 0, newTotal: 0 },
+          enabled: 0, paused: 0, excluded: 0,
+        };
+      },
+      appConfigRead: async () => {
+        seen.push("config-read");
+        return { dailyNewLimit: 20, autosave: true };
+      },
+      appConfigSet: async (key: string, value: string) => {
+        seen.push(`config-set:${key}=${value}`);
+      },
+      reviewSetPrompt: async (id: string, prompt: string | null) => {
+        seen.push(`prompt:${id}=${prompt}`);
+      },
+    };
+    const service = new ReviewService({ ipc: ipc as never, clock: createFakeClock(T0) });
+    await service.stats();
+    await service.appConfig();
+    await service.setAppConfig("editor.autosave", "0");
+    await service.setPrompt("b-0001", "两种持久化？");
+    expect(seen).toEqual(["stats", "config-read", "config-set:editor.autosave=0", "prompt:b-0001=两种持久化？"]);
+    // now() 走注入时钟（UI 计时纪律）
+    expect(service.now()).toBe(T0);
+  });
 });

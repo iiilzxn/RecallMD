@@ -74,7 +74,14 @@ export interface QueueItemDto {
   phase: Phase;
   nextReviewAt: number;
   needsRecheck: boolean;
+  /** 从未评分（占新卡配额） */
   neverRated: boolean;
+  /** 用户回忆提示（§5.2 可选） */
+  recallPrompt: string | null;
+  /** read_document 文本上的半开范围（揭示正文用） */
+  startOffset: number;
+  bodyStartOffset: number;
+  endOffset: number;
 }
 
 export interface QueueCountsDto {
@@ -88,6 +95,8 @@ export interface ReviewQueueResultDto {
   items: QueueItemDto[];
   counts: QueueCountsDto;
   quota: QuotaInfoDto;
+  /** 最早的未到期时刻（稍后到期空态；null=库内无待到期） */
+  nextUpcomingAt: number | null;
 }
 
 export interface ResetBlockResultDto {
@@ -95,6 +104,30 @@ export interface ResetBlockResultDto {
   stateRevision: number;
   scheduledDueAt: number;
 }
+
+/** 简版统计（仅 RATE 计数；§16 不推断记忆率） */
+export interface ReviewStatsResultDto {
+  ratedToday: number;
+  rated7d: number;
+  rated30d: number;
+  distinctBlocks7d: number;
+  distinctBlocks30d: number;
+  /** 下标 0..=3 = Again/Hard/Good/Easy */
+  ratings7d: [number, number, number, number];
+  ratings30d: [number, number, number, number];
+  due: QueueCountsDto;
+  enabled: number;
+  paused: number;
+  excluded: number;
+}
+
+/** 应用配置（白名单键投影） */
+export interface AppConfigDto {
+  dailyNewLimit: number;
+  autosave: boolean;
+}
+
+export type AppConfigKey = "review.daily_new_limit" | "editor.autosave";
 
 export type ParticipationAction = "PAUSE" | "RESUME" | "EXCLUDE" | "INCLUDE";
 
@@ -115,6 +148,18 @@ export const reviewIpc = {
   },
   reviewResetBlock(blockId: string): Promise<ResetBlockResultDto> {
     return ipcCall<ResetBlockResultDto>("review_reset_block", { blockId });
+  },
+  reviewStats(): Promise<ReviewStatsResultDto> {
+    return ipcCall<ReviewStatsResultDto>("review_stats", {});
+  },
+  appConfigRead(): Promise<AppConfigDto> {
+    return ipcCall<AppConfigDto>("app_config_read", {});
+  },
+  appConfigSet(key: AppConfigKey, value: string): Promise<void> {
+    return ipcCall<void>("app_config_set", { key, value });
+  },
+  reviewSetPrompt(blockId: string, prompt: string | null): Promise<void> {
+    return ipcCall<void>("review_set_prompt", { blockId, prompt });
   },
 };
 
