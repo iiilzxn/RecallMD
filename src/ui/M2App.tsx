@@ -9,6 +9,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ipc, type DraftDto, type HostErrorShape } from "../editor/ipc";
 import { indexIpc, type AnchorRepairOp, type RegistrySnapshot } from "../index/ipc";
 import { runIndexSync, runStartupSync, summarize, type SyncSummary } from "../index/sync";
+import { reviewService } from "../review/runtime";
 import { SaveCoordinator, type CoordinatorState } from "../editor/SaveCoordinator";
 import { EditorController, type CursorInfo, type SystemEdit } from "../editor/EditorController";
 import { EngineClient } from "../engine/workerClient";
@@ -305,6 +306,14 @@ export function M2App() {
       }
     })();
   }, []);
+
+  // --- M5：复习服务桥（CDP 验收驱动入口；M6 Review UI 落地后由页面取代） ---
+  useEffect(() => {
+    if (!wsInfo) return;
+    (window as unknown as { __recallmd?: { review: unknown } }).__recallmd = {
+      review: reviewService(),
+    };
+  }, [wsInfo]);
 
   // --- 目录树数据 ---
   const loadDir = useCallback(async (dir: string) => {
