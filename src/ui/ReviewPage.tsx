@@ -60,6 +60,8 @@ export function ReviewPage({ service, onExit, onDueChanged }: Props) {
   const beginRef = useRef<Awaited<ReturnType<ReviewService["begin"]>> | null>(null);
   const startedAtRef = useRef(0);
   const requestIdRef = useRef<string | null>(null);
+  /** 本会话跳过的块（§16 L1049：跳过仅本会话；重拉队列时排除，持久 due 不变） */
+  const skippedRef = useRef<Set<string>>(new Set());
 
   const currentItem = session[index] ?? null;
   const needsRecheck = beginRef.current?.state.needsRecheck ?? currentItem?.needsRecheck ?? false;
@@ -107,6 +109,7 @@ export function ReviewPage({ service, onExit, onDueChanged }: Props) {
       setPhase("loading");
       setError(null);
       setRatedCount(0);
+      skippedRef.current = new Set();
       try {
         const q = await service.queue();
         setQueueInfo(q);
@@ -136,18 +139,21 @@ export function ReviewPage({ service, onExit, onDueChanged }: Props) {
       const next = session.filter((_, idx) => idx !== dropIndex);
       setSession(next);
       if (next.length === 0) {
-        // 会话结束：重拉队列确认没有新到期（学习步 10 分钟内一般没有）
+        // 会话结束：重拉队列确认没有新到期（学习步 10 分钟内一般没有）；
+        // 本会话跳过的块不再回场（§16 跳过仅本会话）
         beginRef.current = null;
         setIndex(0);
         void service
           .queue()
           .then((q) => {
             setQueueInfo(q);
-            if (q.items.length > 0) {
-              setSession(q.items);
+            const fresh = q.items.filter((i) => !skippedRef.current.has(i.blockId));
+            if (fresh.length > 0) {
+              setSession(fresh);
               setIndex(0);
-              void loadCurrent(q.items, 0);
+              void loadCurrent(fresh, 0);
             } else {
+              setSession([]);
               setPhase("done");
             }
           })
@@ -235,6 +241,7 @@ export function ReviewPage({ service, onExit, onDueChanged }: Props) {
 
   const skip = useCallback(() => {
     if (!currentItem || busy) return;
+    skippedRef.current.add(currentItem.blockId);
     flashInfo("已跳过（仅本会话，到期安排不变）");
     advance(index);
   }, [currentItem, busy, advance, index, flashInfo]);
@@ -353,21 +360,32 @@ export function ReviewPage({ service, onExit, onDueChanged }: Props) {
         </div>
       )}
 
-      {phase === "done" && !currentItem && (
+      {phase === "done" && !currentItem && queueInfo && (
         <section className="review-card review-empty">
-          {queueInfo && queueInfo.counts.learning + queueInfo.counts.review > 0 ? (
-            <>
-              <h3>今日新内容名额已用完</h3>
-              <p>
-                还有 {queueInfo.counts.learning + queueInfo.counts.review} 个已到期内容待复习；
-                新内容明天再来（名额 {queueInfo.quota.limit}/天）。
-              </p>
-            </>
+          {queueInfo.counts.learning + queueInfo.counts.review + queueInfo.counts.newTotal > 0 ? (
+            queueInfo.quota.remaining <= 0 ? (
+              <>
+                <h3>今日新内容名额已用完</h3>
+                <p>
+                  还有 {queueInfo.counts.learning + queueInfo.counts.review} 个已到期内容待复习；
+                  新内容明天再来（名额 {queueInfo.quota.limit}/天）。
+                </p>
+              </>
+            ) : (
+              <>
+                <h3>本会话已完成</h3>
+                <p>
+                  还有 {queueInfo.counts.learning + queueInfo.counts.review + queueInfo.counts.newTotal}{" "}
+                  个到期内容是本会话跳过或暂停的（跳过仅本会话，持久安排不变）。
+                  {ratedCount > 0 && ` 本轮已评分 ${ratedCount} 题。`}
+                </p>
+              </>
+            )
           ) : (
             <>
               <h3>当前没有到期内容</h3>
               <p>
-                {queueInfo?.nextUpcomingAt != null
+                {queueInfo.nextUpcomingAt != null
                   ? `稍后到期：${formatClock(queueInfo.nextUpcomingAt)}`
                   : "全部复习完成，写点新笔记吧。"}
                 {ratedCount > 0 && ` 本轮已评分 ${ratedCount} 题。`}
