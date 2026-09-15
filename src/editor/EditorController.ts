@@ -14,6 +14,7 @@ import {
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
+import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { anchorHighlight } from "./anchorHighlight";
 
@@ -69,6 +70,7 @@ export class EditorController {
       highlightSelectionMatches(),
       anchorHighlight,
       markdown({ base: markdownLanguage }),
+      syntaxHighlighting(defaultHighlightStyle),
       keymap.of([
         { key: "Mod-s", preventDefault: true, run: () => (this.cbs.onSave(), true) },
         indentWithTab,

@@ -3,6 +3,44 @@
 import { useEffect, useState, type ReactElement } from "react";
 import { workspaceIpc, type TreeEntryDto } from "../workspace/ipc";
 
+/** 树图标（M8 视觉：SVG 替换 emoji，尺寸随 16px 网格） */
+function ChevronIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+      <path d="M4 2.5 7.5 6 4 9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function FolderIcon({ open }: { open?: boolean }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M1.8 3.6c0-.55.45-1 1-1h3l1.5 1.7h5.9c.55 0 1 .45 1 1v7.1c0 .55-.45 1-1 1H2.8c-.55 0-1-.45-1-1z"
+        fill={open ? "#f3e8cd" : "#f8f0dd"}
+        stroke="#d3a756"
+        strokeWidth="1.1"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function FileIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M4.3 1.7h4.4l3 3v9c0 .55-.45 1-1 1H4.3c-.55 0-1-.45-1-1v-11c0-.55.45-1 1-1z"
+        fill="#fff"
+        stroke="#96a3b3"
+        strokeWidth="1.1"
+        strokeLinejoin="round"
+      />
+      <path d="M8.6 1.9v3h2.9" stroke="#96a3b3" strokeWidth="1.1" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export interface TreeRowActions {
   onToggleDir: (rel: string) => void;
   onSelectDir: (rel: string) => void;
@@ -44,11 +82,17 @@ function TreeRow({
       >
         {entry.isDir ? (
           <>
-            <span className={`tree-caret${isOpen ? " open" : ""}`}>▸</span>
-            <span className="tree-icon">📁</span>
+            <span className={`tree-caret${isOpen ? " open" : ""}`}>
+              <ChevronIcon />
+            </span>
+            <span className="tree-icon">
+              <FolderIcon open={isOpen} />
+            </span>
           </>
         ) : (
-          <span className="tree-icon file">📄</span>
+          <span className="tree-icon file">
+            <FileIcon />
+          </span>
         )}
         <span className="tree-name">{entry.name}</span>
         <span className="tree-actions" onClick={(e) => e.stopPropagation()}>
@@ -195,9 +239,11 @@ export function DirPickerTree({
             });
           }}
         >
-          ▸
+          <ChevronIcon />
         </span>
-        <span className="tree-icon">📁</span>
+        <span className="tree-icon">
+          <FolderIcon open={isOpen} />
+        </span>
         <span className="tree-name">{name}</span>
       </div>,
     ];

@@ -10,11 +10,11 @@ import type { PreviewItem, RatingName } from "../review/scheduler";
 import type { ReviewService } from "../review/service";
 import type { QueueItemDto, ReviewQueueResultDto } from "../review/ipc";
 
-const RATING_LABELS: readonly { name: RatingName; key: string; hint: string }[] = [
-  { name: "Again", key: "1", hint: "没回忆起来" },
-  { name: "Hard", key: "2", hint: "回忆正确，很费力" },
-  { name: "Good", key: "3", hint: "正常回忆正确" },
-  { name: "Easy", key: "4", hint: "轻松完整回忆" },
+const RATING_LABELS: readonly { name: RatingName; key: string; hint: string; tier: string }[] = [
+  { name: "Again", key: "1", hint: "没回忆起来", tier: "again" },
+  { name: "Hard", key: "2", hint: "回忆正确，很费力", tier: "hard" },
+  { name: "Good", key: "3", hint: "正常回忆正确", tier: "good" },
+  { name: "Easy", key: "4", hint: "轻松完整回忆", tier: "easy" },
 ];
 
 /** §11.2 L460：短间隔显示分钟，长间隔显示天 */
@@ -322,6 +322,10 @@ export function ReviewPage({ service, onExit, onDueChanged }: Props) {
       ].filter(Boolean)
     : [];
 
+  // 会话进度：已评 /（已评 + 剩余），收敛到 100%
+  const sessionTotal = ratedCount + session.length;
+  const progressPct = sessionTotal > 0 ? Math.round((ratedCount / sessionTotal) * 100) : 0;
+
   return (
     <div className="review-page">
       <header className="review-header">
@@ -348,6 +352,10 @@ export function ReviewPage({ service, onExit, onDueChanged }: Props) {
           </button>
         </div>
       </header>
+
+      <div className="review-progressbar" aria-hidden="true">
+        <i style={{ width: `${progressPct}%` }} />
+      </div>
 
       {info && <div className="review-toast">{info}</div>}
       {error && (
@@ -514,7 +522,7 @@ export function ReviewPage({ service, onExit, onDueChanged }: Props) {
                     <button
                       type="button"
                       key={r.name}
-                      className="btn rate-btn"
+                      className={`btn rate-btn ${r.tier}`}
                       disabled={busy || (needsRecheck && !resolution)}
                       title={`${r.hint}（键盘 ${r.key}）`}
                       onClick={() => void rate(r.name)}

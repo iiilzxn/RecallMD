@@ -3,7 +3,7 @@
 // M3：Block Engine 接线——保存流锚点插入桥、纳入复习动作、状态栏块计数、
 // 500ms 防抖的已保存版本分析（§15.2）。
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -105,6 +105,41 @@ function MissingIdRow({
 
 /** 状态栏的引擎扫描摘要（§15.2：仅对已保存版本分析）。 */
 type EngineUi = { blocks: number; anchored: number; conflicts: number };
+
+/** 品牌标识（M8 视觉）：层叠记忆标记，渐变 id 每实例唯一 */
+function LogoMark({ size = 22 }: { size?: number }) {
+  const gid = useId();
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" className="logo-mark">
+      <rect x="1.5" y="1.5" width="21" height="21" rx="6" fill={`url(#${gid})`} />
+      <path d="M12 6.2 6.9 9.1l5.1 2.9 5.1-2.9z" fill="#fff" />
+      <path
+        d="M6.9 12.4 12 15.3l5.1-2.9"
+        stroke="#fff"
+        strokeWidth="1.7"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        opacity=".75"
+      />
+      <path
+        d="M6.9 15.8 12 18.7l5.1-2.9"
+        stroke="#fff"
+        strokeWidth="1.7"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        opacity=".45"
+      />
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#16948a" />
+          <stop offset="1" stopColor="#0b5d57" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+}
 
 export function M2App() {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -1175,7 +1210,10 @@ export function M2App() {
     <div className="m2-shell">
       <aside className="sidebar">
         <div className="sidebar-head">
-          <span className="brand">RecallMD</span>
+          <span className="brand">
+            <LogoMark />
+            RecallMD
+          </span>
           <span className="m2-ws-name" title={wsInfo ? wsInfo.root : ""}>
             {wsInfo ? wsInfo.root.split(/[\\/]/).pop() : ""}
           </span>
@@ -1516,7 +1554,10 @@ export function M2App() {
       {!wsInfo && (
         <div className="start-screen">
           <div className="start-card">
-            <h2>RecallMD</h2>
+            <div className="start-brand">
+              <LogoMark size={44} />
+              <h2>RecallMD</h2>
+            </div>
             <p className="hint">
               打开一个文件夹作为知识库。首次打开会在该文件夹创建
               <code>.recallmd/</code>元数据目录（恢复材料与操作日志）；
