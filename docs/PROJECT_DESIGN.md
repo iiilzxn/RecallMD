@@ -158,7 +158,7 @@ React Context + reducer 管理活动 Workspace、当前文件、界面状态即�
 
 Tauri capabilities 按所需命令最小开放；Rust 只接受已激活 Workspace 的相对路径，规范化后核验实际目标及父目录仍在根内。禁止 `..`、路径前缀绕过、NTFS alternate data stream 路径、符号链接/junction 逃逸；MVP 不遍历 reparse point。创建时对不存在的目标校验真实父目录；Windows 保留名、结尾点/空格、大小写冲突均先拒绝。[Tauri Capabilities](https://v2.tauri.app/security/capabilities/)
 
-预览与复习渲染采用受控 Markdown 渲染组件，原始 HTML 不执行；禁用 script、事件属性、iframe、`javascript:` 链接。外链点击交给系统浏览器，只允许 `https`/`http`；图片默认只加载根目录内资源，外部图片需用户单次授权加载，默认无自动网络请求。路径链接在应用内定位，不能让 Markdown 触发任意 Tauri 命令。
+预览与复习渲染采用受控 Markdown 渲染组件，原始 HTML 默认零执行；禁用 script、事件属性、iframe、`javascript:` 链接。M9 起的两个例外：其一，受限 HTML 白名单——行内 `sub`/`sup`/`kbd`/`br` 与块级 `details`/`summary` 反解析为受控 React 元素（不放开任意标签/属性，仍无 innerHTML 路径）；其二，Mermaid 图表——`securityLevel:"strict"` 运行，产出 SVG 经 DOMPurify 白名单（svg/svgFilters profile）消毒后注入，是全仓库唯一 `dangerouslySetInnerHTML` 点位。外链点击交给系统浏览器，只允许 `https`/`http`；图片只加载工作区相对路径（asset 协议，Rust 侧按激活工作区运行时放行 scope，关闭时收回）与 `data:image` 内联数据，远程图片不自动加载（偏离下文"单次授权"构想，本版直接不加载，保持离线原则）。代码块高亮（lowlight/highlight.js 子集）与 `==高亮==`、脚注编号跳转、文内锚点均为渲染层实现，不改变 mdast 与引擎指纹。路径链接在应用内定位，不能让 Markdown 触发任意 Tauri 命令。
 
 ## 7. Markdown Storage Model
 
@@ -181,7 +181,7 @@ Knowledge/
     trash/<operation_id>/     # 保留删除内容及原路径清单
 ```
 
-最近 Workspace 路径、窗口大小和全局主题放在 Tauri 的应用配置目录；Workspace 复习设置放本库 SQLite。Windows 的真实配置路径由 Tauri 获取，不硬编码用户名。`.recallmd` 是普通目录，点前缀在 Windows 不保证隐藏；目录树始终将它隐藏并排除解析。
+最近 Workspace 路径放在 Tauri 的应用配置目录；Workspace 复习设置放本库 SQLite；全局主题（M9，浅色/深色/跟随系统）存 WebView localStorage——它是纯 UI 偏好，不参与备份迁移，且需要在未打开知识库的启动屏阶段生效（偏离"放 Tauri 应用配置目录"的原构想，行为等价）。Windows 的真实配置路径由 Tauri 获取，不硬编码用户名。`.recallmd` 是普通目录，点前缀在 Windows 不保证隐藏；目录树始终将它隐藏并排除解析。
 
 本库整体可移动：关闭应用后搬走整个文件夹，重新选择目录，根据 `workspace.json` 复用身份并更新本机最近路径。同一份库被完整复制后两边各自继续写是分叉，本版不合并；开启第二份时提示路径不同并避免同时激活。manifest 丢失但 SQLite 尚在时可从 Workspace 行恢复；两者都丢失则创建新 Workspace ID。
 
@@ -195,10 +195,10 @@ Knowledge/
 | 文件结尾 | 不默认补换行、不删除尾空格；禁止全文件自动格式化 |
 | 方言 | CommonMark + GFM 表格、任务列表、删除线、自动链接；识别 YAML frontmatter 但不当答案 |
 | 引用定义 | 文件级 link/image reference definition 作为解析上下文，不作为独立答案；复习渲染携带所需定义 |
-| 图片 | 文本保存相对路径；用户选取/粘贴图片时复制到 `assets/` 唯一文件名，再插入链接；不自动清理未引用图片 |
+| 图片 | 文本保存相对路径；用户选取/粘贴图片时复制到 `assets/` 唯一文件名，再插入链接；不自动清理未引用图片；M9 起预览/复习显示工作区相对路径图片（asset 协议）与 `data:image`，远程图片不自动加载 |
 | 元数据注释 | 只写稳定 Block ID；评分、时间、算法状态不写回正文 |
 
-第一版规范不包含 LaTeX、执行代码、Mermaid 运行时渲染等扩展。本文中的 Mermaid 是设计图，不构成应用必须支持 Mermaid 的承诺。
+v0.1 规范不包含 LaTeX、执行代码等扩展。v0.2（M9）按"预览/复习同渲染"原则补齐阅读层：Mermaid 运行时渲染（懒加载 + DOMPurify 消毒）、预览/复习代码高亮（lowlight 子集，受控元素非 innerHTML）、`==高亮==` 行内方言（渲染层拆分，不改引擎指纹）、GFM 脚注编号跳转与文内锚点（GitHub 风格 slug）、受限 HTML 白名单（sub/sup/kbd/br/details/summary）。LaTeX 公式与代码执行仍不在范围内。本文中的 Mermaid 示例图不构成对其他图表语法的承诺。
 
 ### 7.3 CodeMirror 6 决策
 

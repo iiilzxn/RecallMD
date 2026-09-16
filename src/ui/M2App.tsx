@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { EditorView } from "@codemirror/view";
 import { ipc, type DraftDto, type HostErrorShape } from "../editor/ipc";
@@ -17,6 +18,7 @@ import { ReviewPage } from "./ReviewPage";
 import { StatsPage } from "./StatsPage";
 import { SettingsPage } from "./SettingsPage";
 import { MarkdownView, extractHeadings } from "./MarkdownView";
+import { applyTheme, watchSystemTheme } from "./theme";
 import { SaveCoordinator, type CoordinatorState } from "../editor/SaveCoordinator";
 import { EditorController, type CursorInfo, type SystemEdit } from "../editor/EditorController";
 import { EngineClient } from "../engine/workerClient";
@@ -263,6 +265,22 @@ export function M2App() {
     return () => clearTimeout(t);
   }, [toast]);
 
+  // --- 主题（M9）：启动应用一次；auto 时随系统变化重算（CSS 变量自动生效） ---
+  useEffect(() => {
+    applyTheme();
+    return watchSystemTheme(() => undefined);
+  }, []);
+
+  // --- 本地图片（M9）：工作区相对路径 → asset 协议 URL（Rust 侧按激活工作区放行 scope） ---
+  const resolveImage = useCallback(
+    (rel: string): string | null => {
+      const root = wsInfo?.root;
+      if (!root || !rel) return null;
+      return convertFileSrc(root.replace(/\\/g, "/") + "/" + rel);
+    },
+    [wsInfo?.root],
+  );
+
   // --- 编辑器与协调器初始化（一次；宿主常驻挂载） ---
   useEffect(() => {
     const coord = new SaveCoordinator();
@@ -467,11 +485,14 @@ export function M2App() {
     [tocText, previewOversized],
   );
 
-  /** 目录点击：预览态滚动到锚点；编辑态光标跳转 + 滚动（偏移可能略陈旧，钳到文档末尾） */
+  /** 目录点击：预览态滚动到标题（data-offset，限预览容器防与他页 id 撞）；
+   *  编辑态光标跳转 + 滚动（偏移可能略陈旧，钳到文档末尾） */
   const jumpToHeading = useCallback(
     (offset: number) => {
       if (previewMode) {
-        document.getElementById(`h-${offset}`)?.scrollIntoView({ block: "start" });
+        document
+          .querySelector(`.md-preview [data-offset="${offset}"]`)
+          ?.scrollIntoView({ block: "start" });
         return;
       }
       const view = editorRef.current?.getView();
@@ -1516,6 +1537,7 @@ export function M2App() {
                   <MarkdownView
                     text={previewText}
                     baseRelative={fileInfo ? fileInfo.relative : ""}
+                    resolveImage={resolveImage}
                     onOpenRelative={(rel) => {
                       if (rel) openFile(rel);
                     }}
@@ -1574,6 +1596,7 @@ export function M2App() {
                 service={reviewService()}
                 onExit={() => setView("editor")}
                 onDueChanged={refreshDue}
+                resolveImage={resolveImage}
               />
             )}
             {view === "stats" && <StatsPage service={reviewService()} />}

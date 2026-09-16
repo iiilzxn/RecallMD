@@ -49,6 +49,11 @@ fn app_config_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 fn workspace_open(root: String, app: tauri::AppHandle) -> HostResult<WorkspaceInfo> {
     use tauri::Emitter as _;
     let info = open_workspace(&root)?;
+    // M9 本地图片：asset 协议 scope 运行时放行当前工作区（配置里 scope 为空，
+    // 未打开工作区的进程不暴露任何文件）。forbid 优先于 allow，见 scope::fs 语义。
+    let _ = app
+        .asset_protocol_scope()
+        .allow_directory(&info.root, true);
     // M7：文件监听随工作区启动/关闭（§13.3）；事件推给前端编排同步
     let watch_root = std::path::PathBuf::from(&info.root);
     let emit_app = app.clone();
@@ -65,7 +70,11 @@ fn workspace_open(root: String, app: tauri::AppHandle) -> HostResult<WorkspaceIn
 }
 
 #[tauri::command]
-fn workspace_close() -> HostResult<()> {
+fn workspace_close(app: tauri::AppHandle) -> HostResult<()> {
+    // 收回 asset 协议对旧根的访问（切换工作区后旧根不再可读）
+    if let Ok(root) = active_root() {
+        let _ = app.asset_protocol_scope().forbid_directory(&root, true);
+    }
     // 先停监听再关工作区：关闭期间的文件变化由下次打开的启动枚举核对
     crate::persistence::watcher::stop();
     close_workspace()

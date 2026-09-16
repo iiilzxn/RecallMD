@@ -41,14 +41,18 @@ interface Props {
   onExit: () => void;
   /** 评分/参与变化后通知外层刷新侧栏到期角标 */
   onDueChanged: () => void;
+  /** 工作区相对路径图片 → asset URL（M9 本地图片；由持有 workspace 根的 M2App 注入） */
+  resolveImage?: (rel: string) => string | null;
 }
 
-export function ReviewPage({ service, onExit, onDueChanged }: Props) {
+export function ReviewPage({ service, onExit, onDueChanged, resolveImage }: Props) {
   const [queueInfo, setQueueInfo] = useState<ReviewQueueResultDto | null>(null);
   const [session, setSession] = useState<QueueItemDto[]>([]);
   const [index, setIndex] = useState(0);
   const [phase, setPhase] = useState<Phase>("loading");
   const [bodyText, setBodyText] = useState<string | null>(null);
+  /** 揭示时取到的全文：仅供渲染层携带引用/脚注定义（§7.2 L197），不复用为题面 */
+  const [fullText, setFullText] = useState<string | null>(null);
   const [contextRaw, setContextRaw] = useState<string | null>(null);
   const [contextUsed, setContextUsed] = useState(false);
   const [resolution, setResolution] = useState<"KEEP" | "RESET" | null>(null);
@@ -82,6 +86,7 @@ export function ReviewPage({ service, onExit, onDueChanged }: Props) {
       setPhase("loading");
       setError(null);
       setBodyText(null);
+      setFullText(null);
       setContextRaw(null);
       setContextUsed(false);
       setResolution(null);
@@ -177,6 +182,7 @@ export function ReviewPage({ service, onExit, onDueChanged }: Props) {
       setError(null);
       try {
         const doc = await ipc.readDocument(item.relativePath);
+        setFullText(doc.text);
         setBodyText(doc.text.slice(item.bodyStartOffset, item.endOffset));
         if (withContext) {
           setContextRaw(doc.text.slice(item.startOffset, item.endOffset));
@@ -515,10 +521,14 @@ export function ReviewPage({ service, onExit, onDueChanged }: Props) {
                   <pre>{contextRaw}</pre>
                 </details>
               )}
-              {/* §207：复习渲染复用受控 Markdown 渲染（ID 注释/原始 HTML 不显示） */}
+              {/* §207：复习渲染复用受控 Markdown 渲染（ID 注释/原始 HTML 不显示）；
+                  baseRelative 修正相对链接/图片基准；defsText 携带全文引用/脚注定义（§7.2 L197） */}
               <div className="review-body">
                 <MarkdownView
                   text={bodyText ?? ""}
+                  baseRelative={currentItem?.relativePath ?? ""}
+                  defsText={fullText}
+                  resolveImage={resolveImage}
                   onExternalLink={(u) =>
                     flashInfo(`外链请在系统浏览器打开：${u.length > 60 ? `${u.slice(0, 60)}…` : u}`)
                   }

@@ -14,9 +14,46 @@ import {
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { syntaxHighlighting } from "@codemirror/language";
+import { tagHighlighter, tags } from "@lezer/highlight";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { anchorHighlight } from "./anchorHighlight";
+
+/**
+ * 受控语法高亮器（M9）：只下发 tok-* 语义类名，颜色全部由 styles.css 的
+ * CSS 变量承担——浅/深两套主题换 data-theme 即换肤，不内联任何色值。
+ * （此前用的 defaultHighlightStyle 是 styleModule 内联色，深色下不可控。）
+ */
+const mdHighlighter = tagHighlighter([
+  { tag: tags.heading1, class: "tok-heading tok-heading1" },
+  { tag: tags.heading2, class: "tok-heading tok-heading2" },
+  { tag: tags.heading3, class: "tok-heading tok-heading3" },
+  { tag: tags.heading4, class: "tok-heading tok-heading4" },
+  { tag: tags.heading5, class: "tok-heading tok-heading5" },
+  { tag: tags.heading6, class: "tok-heading tok-heading6" },
+  { tag: tags.emphasis, class: "tok-emphasis" },
+  { tag: tags.strong, class: "tok-strong" },
+  { tag: tags.link, class: "tok-link" },
+  { tag: tags.url, class: "tok-url" },
+  { tag: tags.monospace, class: "tok-monospace" },
+  { tag: tags.processingInstruction, class: "tok-meta" },
+  { tag: tags.keyword, class: "tok-keyword" },
+  { tag: tags.atom, class: "tok-atom" },
+  { tag: tags.bool, class: "tok-bool" },
+  { tag: tags.string, class: "tok-string" },
+  { tag: tags.special(tags.string), class: "tok-string2" },
+  { tag: tags.number, class: "tok-number" },
+  { tag: tags.comment, class: "tok-comment" },
+  { tag: tags.operator, class: "tok-operator" },
+  { tag: tags.typeName, class: "tok-typeName" },
+  { tag: tags.variableName, class: "tok-variableName" },
+  { tag: tags.definition(tags.variableName), class: "tok-variableName tok-definition" },
+  { tag: tags.propertyName, class: "tok-propertyName" },
+  { tag: tags.namespace, class: "tok-namespace" },
+  { tag: tags.className, class: "tok-className" },
+  { tag: tags.meta, class: "tok-meta" },
+  { tag: tags.invalid, class: "tok-invalid" },
+]);
 
 export interface CursorInfo {
   line: number; // 1 起
@@ -70,7 +107,7 @@ export class EditorController {
       highlightSelectionMatches(),
       anchorHighlight,
       markdown({ base: markdownLanguage }),
-      syntaxHighlighting(defaultHighlightStyle),
+      syntaxHighlighting(mdHighlighter),
       keymap.of([
         { key: "Mod-s", preventDefault: true, run: () => (this.cbs.onSave(), true) },
         indentWithTab,

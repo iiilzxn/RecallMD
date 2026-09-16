@@ -1,5 +1,5 @@
 // M6 设置页（§16 Settings）：Workspace 信息、时区、新内容日配额、
-// 自动保存开关、备份/恢复入口、诊断与版本。备份命令层 M4 已全量就绪。
+// 自动保存开关、外观主题（M9）、备份/恢复入口、诊断与版本。备份命令层 M4 已全量就绪。
 
 import { useCallback, useEffect, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -8,6 +8,7 @@ import type { HostErrorShape } from "../editor/ipc";
 import { ALGORITHM_ID, ALGORITHM_VERSION, STATE_SCHEMA_VERSION } from "../review/scheduler";
 import type { DbBackupEntryDto, FullBackupResultDto } from "../index/ipc";
 import type { ReviewService } from "../review/service";
+import { getThemePref, setThemePref, type ThemePref } from "./theme";
 
 function tzDisplay(): string {
   const opts = Intl.DateTimeFormat().resolvedOptions();
@@ -28,6 +29,7 @@ export function SettingsPage({
 }) {
   const [dailyLimit, setDailyLimit] = useState<number | null>(null);
   const [autosave, setAutosave] = useState(true);
+  const [themePref, setThemePrefState] = useState<ThemePref>(() => getThemePref());
   const [backups, setBackups] = useState<DbBackupEntryDto[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -142,6 +144,12 @@ export function SettingsPage({
     }
   }, [flash]);
 
+  // 外观（M9）：UI 层偏好，存 WebView localStorage，即改即生效（CSS 变量 + mermaid 重绘）
+  const changeTheme = useCallback((pref: ThemePref) => {
+    setThemePref(pref);
+    setThemePrefState(pref);
+  }, []);
+
   return (
     <div className="settings-page">
       <header className="page-header">
@@ -149,6 +157,32 @@ export function SettingsPage({
       </header>
       {message && <div className="review-toast">{message}</div>}
       {error && <div className="review-error">{error.message}</div>}
+
+      <section className="stats-section">
+        <h3>外观</h3>
+        <div className="settings-row" role="radiogroup" aria-label="主题">
+          <span className="settings-row-label">主题</span>
+          {(
+            [
+              ["auto", "跟随系统"],
+              ["light", "浅色"],
+              ["dark", "深色"],
+            ] as const
+          ).map(([value, label]) => (
+            <label key={value} className="theme-option">
+              <input
+                type="radio"
+                name="theme"
+                value={value}
+                checked={themePref === value}
+                onChange={() => changeTheme(value)}
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+        <p className="hint">跟随系统时随 Windows 深浅色设置自动切换；编辑器、预览（含图表与代码高亮）同步换肤。</p>
+      </section>
 
       <section className="stats-section">
         <h3>知识库</h3>

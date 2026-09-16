@@ -3,13 +3,30 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light" />
+    <meta name="color-scheme" content="light dark" />
     <link rel="icon" href="data:," />
     <title>RecallMD</title>
     <style>
-      /* 消除加载期白闪，与 :root 背景一致 */
+      /* 消除加载期白闪：默认浅色底，深色由下方脚本在渲染前覆盖 */
       html { background: #f2f4f7; }
+      html[data-theme="dark"] { background: #10161d; }
     </style>
+    <script>
+      // 主题引导（与 src/ui/theme.ts 的键语义一致）：React 挂载前设 data-theme，
+      // 避免 localStorage 里存了深色的用户启动瞬间白闪
+      (function () {
+        try {
+          var v = localStorage.getItem("recallmd.theme");
+          var dark =
+            v === "dark" ||
+            (v !== "light" &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.dataset.theme = dark ? "dark" : "light";
+        } catch (e) {
+          /* localStorage 不可用时按浅色 */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
