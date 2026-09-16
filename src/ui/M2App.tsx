@@ -3,10 +3,11 @@
 // M3：Block Engine 接线——保存流锚点插入桥、纳入复习动作、状态栏块计数、
 // 500ms 防抖的已保存版本分析（§15.2）。
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { EditorView } from "@codemirror/view";
 import { ipc, type DraftDto, type HostErrorShape } from "../editor/ipc";
 import { indexIpc, type AnchorRepairOp, type RegistrySnapshot } from "../index/ipc";
 import { runIndexSync, runStartupSync, summarize, type SyncSummary } from "../index/sync";
@@ -15,6 +16,7 @@ import { reviewService } from "../review/runtime";
 import { ReviewPage } from "./ReviewPage";
 import { StatsPage } from "./StatsPage";
 import { SettingsPage } from "./SettingsPage";
+import { MarkdownView, extractHeadings } from "./MarkdownView";
 import { SaveCoordinator, type CoordinatorState } from "../editor/SaveCoordinator";
 import { EditorController, type CursorInfo, type SystemEdit } from "../editor/EditorController";
 import { EngineClient } from "../engine/workerClient";
@@ -141,6 +143,34 @@ function LogoMark({ size = 22 }: { size?: number }) {
   );
 }
 
+/** 预览开关（§207 可切换只读预览）：眼睛开/闭两态 */
+function EyeToggleIcon({ off }: { off: boolean }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+      {off ? (
+        <path
+          d="M3 12c2.5-4.2 5.6-6.3 9-6.3 1.2 0 2.4.25 3.5.75M21 12c-1 1.7-2.2 3.1-3.5 4.1-1.4 1.1-2.9 1.6-4.5 1.6-1.2 0-2.4-.25-3.5-.75M4 20 20 4"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          fill="none"
+          strokeLinecap="round"
+        />
+      ) : (
+        <>
+          <path
+            d="M2.5 12C5 7.8 8.2 5.7 12 5.7s7 2.1 9.5 6.3c-2.5 4.2-5.7 6.3-9.5 6.3s-7-2.1-9.5-6.3z"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            fill="none"
+            strokeLinejoin="round"
+          />
+          <circle cx="12" cy="12" r="2.8" stroke="currentColor" strokeWidth="1.8" fill="none" />
+        </>
+      )}
+    </svg>
+  );
+}
+
 export function M2App() {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<EditorController | null>(null);
@@ -237,7 +267,10 @@ export function M2App() {
   useEffect(() => {
     const coord = new SaveCoordinator();
     const editor = new EditorController({
-      onDocChanged: () => coord.notifyInput(),
+      onDocChanged: () => {
+        coord.notifyInput();
+        tocPokeRef.current?.(); // 目录空闲防抖刷新（编辑态）
+      },
       onCompositionStart: () => coord.notifyCompositionStart(),
       onCompositionEnd: () => coord.notifyCompositionEnd(),
       onCursor: setCursor,
@@ -323,6 +356,7 @@ export function M2App() {
     return () => {
       unsub();
       if (scanTimerRef.current) window.clearTimeout(scanTimerRef.current);
+      if (tocTimerRef.current) window.clearTimeout(tocTimerRef.current);
       engine.dispose();
       editor.destroy();
       coord.close();
@@ -346,6 +380,111 @@ export function M2App() {
       )
       .catch(() => setDueBadge(null));
   }, []);
+
+  // --- 只读 Markdown 预览（§207：默认关闭；§15.2 快照只在切换/系统边界取全文） ---
+  const [previewMode, setPreviewMode] = useState(false);
+  const [previewText, setPreviewText] = useState("");
+  /** §1014 大文件阈值：≥5 MiB / 5 万行禁用预览（cursor 由编辑器增量上报） */
+  const previewOversized = cursor.chars > 5_000_000 || cursor.lines > 50_000;
+  const canPreview = fileInfo !== null && banner === null && !previewOversized;
+
+  const togglePreview = useCallback(() => {
+    if (previewMode) {
+      setPreviewMode(false);
+      if (fileInfo) editorRef.current?.focus();
+      return;
+    }
+    if (!fileInfo || banner || previewOversized) return;
+    setPreviewText(editorRef.current?.getText() ?? "");
+    setPreviewMode(true);
+  }, [previewMode, fileInfo, banner, previewOversized]);
+  const togglePreviewRef = useRef(togglePreview);
+  togglePreviewRef.current = togglePreview;
+
+  // Ctrl+E 切换：仅编辑视图；输入框/IME 焦点不触发（与 ReviewPage 键盘纪律一致）
+  useEffect(() => {
+    if (view !== "editor") return;
+    const h = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "e" || e.isComposing) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      e.preventDefault();
+      togglePreviewRef.current();
+    };
+    document.addEventListener("keydown", h, true);
+    return () => document.removeEventListener("keydown", h, true);
+  }, [view]);
+
+  // 预览快照刷新：预览只读（无用户键入），只在系统边界后重取——
+  // 保存插锚（status/lastSavedAtMs 变化）、外部重载（replaceDoc→eolState）、切换文件
+  useEffect(() => {
+    if (!previewMode) return;
+    const ed = editorRef.current;
+    if (ed) setPreviewText(ed.getText());
+  }, [previewMode, fileInfo?.relative, coordState?.status, coordState?.lastSavedAtMs, eolState]);
+
+  // 文件关闭（切换文件不退出预览，快照随 relative 刷新）：只在开→关边沿退出
+  const fileOpen = fileInfo !== null;
+  useEffect(() => {
+    if (!fileOpen) setPreviewMode(false);
+  }, [fileOpen]);
+
+  // --- 右侧目录（TOC）：与预览同源解析（parseMarkdown，围栏/引言里的 # 不入目录）；
+  // 编辑态输入空闲 700ms 防抖刷新（§15.2 允许的“空闲解析”边界，非每按键全量） ---
+  const [tocText, setTocText] = useState("");
+  const tocTimerRef = useRef<number | null>(null);
+  const requestTocRefresh = useCallback(() => {
+    if (tocTimerRef.current) window.clearTimeout(tocTimerRef.current);
+    tocTimerRef.current = window.setTimeout(() => {
+      tocTimerRef.current = null;
+      if (previewMode) return; // 预览态目录由 previewText 驱动
+      const ed = editorRef.current;
+      if (!ed || !coordRef.current?.openFile) return;
+      const text = ed.getText();
+      if (text.length > 5_000_000) return; // 大文件不做空闲解析（§1014）
+      setTocText(text);
+    }, 700);
+  }, [previewMode]);
+  const tocPokeRef = useRef(requestTocRefresh);
+  tocPokeRef.current = requestTocRefresh;
+
+  // 目录快照：预览态=预览文本；编辑态在打开/保存/外部重载边界即时刷新
+  useEffect(() => {
+    if (previewMode) {
+      setTocText(previewText);
+      return;
+    }
+    const ed = editorRef.current;
+    if (!ed || !coordRef.current?.openFile) {
+      setTocText("");
+      return;
+    }
+    setTocText(ed.getText());
+  }, [previewMode, previewText, fileInfo?.relative, coordState?.status, coordState?.lastSavedAtMs, eolState]);
+
+  const tocHeadings = useMemo(
+    () => (previewOversized ? [] : extractHeadings(tocText)),
+    [tocText, previewOversized],
+  );
+
+  /** 目录点击：预览态滚动到锚点；编辑态光标跳转 + 滚动（偏移可能略陈旧，钳到文档末尾） */
+  const jumpToHeading = useCallback(
+    (offset: number) => {
+      if (previewMode) {
+        document.getElementById(`h-${offset}`)?.scrollIntoView({ block: "start" });
+        return;
+      }
+      const view = editorRef.current?.getView();
+      if (!view) return;
+      const pos = Math.min(offset, view.state.doc.length);
+      editorRef.current?.focus();
+      view.dispatch({
+        selection: { anchor: pos },
+        effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 12 }),
+      });
+    },
+    [previewMode],
+  );
 
   // --- 启动：查询已激活 workspace 与最近列表 ---
   useEffect(() => {
@@ -1320,6 +1459,21 @@ export function M2App() {
             </span>
             <span className="spacer" />
             <button
+              className={`icon-btn${previewMode ? " active" : ""}`}
+              disabled={!canPreview}
+              aria-pressed={previewMode}
+              title={
+                previewOversized
+                  ? "大文件（≥5 MiB 或 5 万行）预览不可用"
+                  : previewMode
+                    ? "返回编辑 (Ctrl+E)"
+                    : "Markdown 预览 (Ctrl+E)"
+              }
+              onClick={togglePreview}
+            >
+              <EyeToggleIcon off={!previewMode} />
+            </button>
+            <button
               disabled={!fileInfo || engineDead || status === "conflict"}
               title="为当前文件的复习块插入 ID 锚点并保存"
               onClick={() => void handleInclude()}
@@ -1353,16 +1507,63 @@ export function M2App() {
           </div>
         )}
 
-        <div className={`editor-area${view === "editor" ? "" : " is-hidden"}`}>
-          <div className="editor-shell" ref={hostRef} />
-          {wsInfo && fileInfo === null && !banner && view === "editor" && (
-            <div className="welcome">
-              <h2>从左侧选择一个文件开始</h2>
-              <p>
-                选中文件夹后可直接新建文件；删除的文件进入回收站，可随时恢复。
-                保存协议的恢复材料保存在 <code>.recallmd/</code>。
-              </p>
-            </div>
+        <div className={`editor-row${view === "editor" ? "" : " is-hidden"}`}>
+          <div className={`editor-area${previewMode ? " in-preview" : ""}`}>
+            <div className="editor-shell" ref={hostRef} />
+            {previewMode && canEdit && (
+              <div className="md-preview">
+                <div className="md-preview-inner">
+                  <MarkdownView
+                    text={previewText}
+                    baseRelative={fileInfo ? fileInfo.relative : ""}
+                    onOpenRelative={(rel) => {
+                      if (rel) openFile(rel);
+                    }}
+                    onExternalLink={(u) =>
+                      showToast(
+                        `外链请在系统浏览器打开：${u.length > 90 ? `${u.slice(0, 90)}…` : u}`,
+                      )
+                    }
+                  />
+                </div>
+              </div>
+            )}
+            {wsInfo && fileInfo === null && !banner && view === "editor" && (
+              <div className="welcome">
+                <h2>从左侧选择一个文件开始</h2>
+                <p>
+                  选中文件夹后可直接新建文件；删除的文件进入回收站，可随时恢复。
+                  保存协议的恢复材料保存在 <code>.recallmd/</code>。
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* 右侧目录：编辑/预览两态共用；点击跳转（预览滚动锚点 / 编辑光标定位） */}
+          {view === "editor" && fileInfo && (
+            <aside className="toc-aside">
+              <div className="toc-head">目录</div>
+              <div className="toc-list">
+                {previewOversized ? (
+                  <div className="toc-empty">大文件（≥5 MiB / 5 万行）目录已停用</div>
+                ) : tocHeadings.length === 0 ? (
+                  <div className="toc-empty">无标题结构</div>
+                ) : (
+                  tocHeadings.map((h) => (
+                    <div
+                      key={h.offset}
+                      className="toc-item"
+                      data-level={h.level}
+                      style={{ paddingLeft: 8 + (h.level - 1) * 13 }}
+                      title={h.text}
+                      onClick={() => jumpToHeading(h.offset)}
+                    >
+                      {h.text || "（无标题）"}
+                    </div>
+                  ))
+                )}
+              </div>
+            </aside>
           )}
         </div>
 

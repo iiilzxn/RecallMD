@@ -1036,7 +1036,7 @@ button.danger:hover:not(:disabled) {
 }
 
 .editor-area.is-hidden {
-  display: none;
+  display: none; /* 已由 .editor-row.is-hidden 接管，保留兼容 */
 }
 
 .page-header {
@@ -1611,6 +1611,360 @@ button.danger:hover:not(:disabled) {
   font-weight: 600;
   color: var(--accent-strong);
   font-variant-numeric: tabular-nums;
+}
+
+/* ===== Markdown 预览（M8 后补：§207 可切换只读预览，编辑页全幅 + 复习页复用） ===== */
+
+/* 顶栏图标按钮（眼睛开关） */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 27px;
+  padding: 0;
+}
+
+.icon-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.icon-btn.active:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+/* 预览态：隐藏 CM 宿主（实例常驻不卸载，返回编辑无损） */
+.editor-area.in-preview .editor-shell {
+  display: none;
+}
+
+.md-preview {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background: var(--surface);
+  z-index: 4;
+}
+
+.md-preview-inner {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 30px 40px 30vh;
+  font-size: 15px;
+  line-height: 1.85;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.md-preview-inner > :first-child {
+  margin-top: 0;
+}
+
+.md-preview-inner h1,
+.md-preview-inner h2,
+.md-preview-inner h3,
+.md-preview-inner h4,
+.md-preview-inner h5,
+.md-preview-inner h6,
+.review-body h1,
+.review-body h2,
+.review-body h3,
+.review-body h4,
+.review-body h5,
+.review-body h6 {
+  color: #0d5f58;
+  font-weight: 600;
+  line-height: 1.45;
+  margin: 1.4em 0 0.55em;
+}
+
+.md-preview-inner h1,
+.review-body h1 {
+  font-size: 1.55em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+}
+
+.md-preview-inner h2,
+.review-body h2 {
+  font-size: 1.32em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid #eef2f5;
+}
+
+.md-preview-inner h3,
+.review-body h3 {
+  font-size: 1.16em;
+}
+
+.md-preview-inner h4,
+.md-preview-inner h5,
+.md-preview-inner h6,
+.review-body h4,
+.review-body h5,
+.review-body h6 {
+  font-size: 1.04em;
+}
+
+.md-preview-inner p,
+.review-body p {
+  margin: 0.55em 0;
+}
+
+.md-preview-inner h1 + p,
+.md-preview-inner h2 + p,
+.md-preview-inner h3 + p,
+.md-preview-inner h1 + ul,
+.md-preview-inner h1 + ol {
+  margin-top: 0.3em;
+}
+
+.md-preview-inner ul,
+.md-preview-inner ol,
+.review-body ul,
+.review-body ol {
+  margin: 0.55em 0;
+  padding-left: 1.6em;
+}
+
+.md-preview-inner li,
+.review-body li {
+  margin: 0.2em 0;
+}
+
+/* 任务列表：勾选框与文字对齐 */
+.md-task-list,
+.md-preview-inner ul.md-task-list,
+.review-body ul.md-task-list {
+  list-style: none;
+  padding-left: 0.4em;
+}
+
+.md-task-list input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  margin-right: 7px;
+  vertical-align: -2px;
+}
+
+.md-plain {
+  display: inline;
+}
+
+.md-preview-inner blockquote,
+.review-body blockquote {
+  margin: 0.8em 0;
+  padding: 4px 14px;
+  border-left: 3px solid #a4ccc6;
+  background: var(--accent-softer);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  color: var(--text-2);
+}
+
+.md-preview-inner hr,
+.review-body hr {
+  border: none;
+  border-top: 1px solid var(--border-strong);
+  margin: 1.6em 0;
+}
+
+.md-preview-inner code,
+.review-body code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: #e9eef4;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.md-preview-inner pre,
+.review-body pre {
+  margin: 0.8em 0;
+  padding: 12px 15px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: auto;
+  line-height: 1.7;
+}
+
+.md-preview-inner pre code,
+.review-body pre code {
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  border-radius: 0;
+}
+
+/* 表格：继承全局 th/td 边框，这里补密度与滚动 */
+.md-preview-inner table,
+.review-body table {
+  margin: 0.9em 0;
+  font-size: 13.5px;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.md-preview-inner th,
+.md-preview-inner td,
+.review-body th,
+.review-body td {
+  padding: 5px 11px;
+}
+
+/* 链接：内部/外部/禁用三态 */
+.md-preview-inner a,
+.review-body a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(15, 118, 110, 0.35);
+  cursor: pointer;
+}
+
+.md-preview-inner a:hover,
+.review-body a:hover {
+  color: var(--accent-strong);
+  border-bottom-color: var(--accent-strong);
+}
+
+.md-preview-inner .md-ext,
+.review-body .md-ext {
+  border-bottom-style: dashed;
+}
+
+.md-link-blocked {
+  color: var(--text-3);
+  background: var(--warn-soft);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.md-link-anchor {
+  color: var(--text-2);
+  border-bottom: 1px dotted var(--text-3);
+}
+
+.md-fnref {
+  color: var(--accent);
+  font-size: 0.75em;
+  padding: 0 2px;
+}
+
+.md-fndef {
+  font-size: 0.9em;
+  color: var(--text-2);
+}
+
+/* 图片占位框：本版不加载任何图片（§161 默认无自动网络请求） */
+.md-img {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 2px 0;
+  padding: 2px 9px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunken);
+  color: var(--text-2);
+  font-size: 0.9em;
+}
+
+.md-img code {
+  font-size: 0.85em;
+  color: var(--text-3);
+}
+
+/* 复习页正文：由 <pre> 改为渲染视图，保留原承载样式 */
+.review-body {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.8;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 14px 18px;
+}
+
+.review-body > div > :last-child {
+  margin-bottom: 0;
+}
+
+/* 编辑行：编辑区 + 右侧目录（M8 后补 TOC）；视图切换隐藏整行（CM 实例常驻不卸载） */
+.editor-row {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.editor-row.is-hidden {
+  display: none;
+}
+
+/* ===== 右侧目录（TOC） ===== */
+
+.toc-aside {
+  width: 216px;
+  min-width: 216px;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--surface-sunken);
+}
+
+.toc-head {
+  padding: 9px 14px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.toc-list {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 6px 24px;
+}
+
+.toc-item {
+  font-size: 12.5px;
+  line-height: 1.55;
+  padding: 3px 8px;
+  margin: 1px 0;
+  border-radius: 4px;
+  color: var(--text-2);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toc-item:hover {
+  background: var(--accent-softer);
+  color: var(--accent-strong);
+}
+
+/* 一级标题加重，层级靠缩进+颜色区分 */
+.toc-item[data-level="1"] {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.toc-item[data-level="1"]:hover {
+  color: var(--accent-strong);
+}
+
+.toc-empty {
+  font-size: 12px;
+  color: var(--text-3);
+  padding: 10px 14px;
+  line-height: 1.7;
 }
 
 /* 动画弱化：偏好减少动效时只关闭本文件自有的装饰性动画/过渡。

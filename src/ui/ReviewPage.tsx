@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ipc, type HostErrorShape } from "../editor/ipc";
+import { MarkdownView } from "./MarkdownView";
 import type { PreviewItem, RatingName } from "../review/scheduler";
 import type { ReviewService } from "../review/service";
 import type { QueueItemDto, ReviewQueueResultDto } from "../review/ipc";
@@ -514,7 +515,15 @@ export function ReviewPage({ service, onExit, onDueChanged }: Props) {
                   <pre>{contextRaw}</pre>
                 </details>
               )}
-              <pre className="review-body">{bodyText}</pre>
+              {/* §207：复习渲染复用受控 Markdown 渲染（ID 注释/原始 HTML 不显示） */}
+              <div className="review-body">
+                <MarkdownView
+                  text={bodyText ?? ""}
+                  onExternalLink={(u) =>
+                    flashInfo(`外链请在系统浏览器打开：${u.length > 60 ? `${u.slice(0, 60)}…` : u}`)
+                  }
+                />
+              </div>
               <div className="review-actions">
                 {RATING_LABELS.map((r, i) => {
                   const p = preview.find((x) => x.rating === r.name);

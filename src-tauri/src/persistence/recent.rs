@@ -36,6 +36,14 @@ pub fn load_recents(cfg_dir: &Path) -> Vec<RecentEntry> {
 }
 
 fn save_recents(cfg_dir: &Path, list: &[RecentEntry]) -> HostResult<()> {
+    // 配置目录可能不存在（首次运行/清理后 Tauri 不会自动创建）：
+    // 不建目录则 write_file_atomic 报 os error 3，最近列表永远写不进去
+    fs::create_dir_all(cfg_dir).map_err(|e| {
+        HostError::new(
+            IO_ERROR,
+            format!("配置目录创建失败：{e}（{}）", cfg_dir.display()),
+        )
+    })?;
     let json = serde_json::to_vec_pretty(list)
         .map_err(|e| HostError::new(IO_ERROR, format!("最近列表序列化失败：{e}")))?;
     write_file_atomic(&recents_path(cfg_dir), &json)
