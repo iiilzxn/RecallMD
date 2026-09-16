@@ -26,12 +26,20 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "RecallMD Project",
+    "shortDescription": "本地 Markdown 编辑器 + FSRS 间隔复习",
+    "licenseFile": "nsis-license.txt",
     "targets": [
       "nsis"
     ],
     "windows": {
       "webviewInstallMode": {
         "type": "offlineInstaller"
+      },
+      "nsis": {
+        "languages": [
+          "SimpChinese"
+        ]
       }
     },
     "icon": [
