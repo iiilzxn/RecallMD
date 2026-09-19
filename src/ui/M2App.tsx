@@ -32,6 +32,8 @@ import {
   type WorkspaceInfoDto,
 } from "../workspace/ipc";
 import { DirPickerTree, SidebarTree } from "./Tree";
+import { Icon } from "./Icon";
+import { Modal } from "./Modal";
 
 type EolState = "LF" | "CRLF" | "MIXED";
 type OpenBanner = { kind: "readonly" | "error"; message: string } | null;
@@ -194,6 +196,7 @@ export function M2App() {
 
   // --- 当前文档与编辑器状态（沿用 M1） ---
   const [coordState, setCoordState] = useState<CoordinatorState | null>(null);
+  const [autosaveEnabled, setAutosaveEnabled] = useState(true);
   const [cursor, setCursor] = useState<CursorInfo>({ line: 1, col: 1, lines: 1, chars: 0 });
   const [fileInfo, setFileInfo] = useState<{ root: string; relative: string } | null>(null);
   const [eolState, setEolState] = useState<EolState>("LF");
@@ -386,6 +389,11 @@ export function M2App() {
 
   // --- M6：页面视图与到期角标 ---
   const [view, setView] = useState<"editor" | "review" | "stats" | "settings">("editor");
+  const [settingsSection, setSettingsSection] = useState<"general" | "participation">("general");
+  const openReviewManagement = useCallback(() => {
+    setSettingsSection("participation");
+    setView("settings");
+  }, []);
   const [dueBadge, setDueBadge] = useState<{ count: number; upcoming: number | null } | null>(null);
   const refreshDue = useCallback(() => {
     reviewService()
@@ -406,6 +414,12 @@ export function M2App() {
   const previewOversized = cursor.chars > 5_000_000 || cursor.lines > 50_000;
   const canPreview = fileInfo !== null && banner === null && !previewOversized;
 
+  useEffect(() => {
+    if (view === "editor" && fileInfo && !previewMode && !document.querySelector("dialog[open]")) {
+      editorRef.current?.focus();
+    }
+  }, [view, fileInfo?.relative, previewMode]);
+
   const togglePreview = useCallback(() => {
     if (previewMode) {
       setPreviewMode(false);
@@ -423,6 +437,7 @@ export function M2App() {
   useEffect(() => {
     if (view !== "editor") return;
     const h = (e: KeyboardEvent) => {
+      if (document.querySelector("dialog[open]")) return;
       if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "e" || e.isComposing) return;
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
@@ -525,11 +540,17 @@ export function M2App() {
   // workspace 可用后：到期角标 + 自动保存配置（M6 设置）
   useEffect(() => {
     if (!wsInfo) return;
+    let cancelled = false;
     refreshDue();
     reviewService()
       .appConfig()
-      .then((c) => coordRef.current?.setAutosaveEnabled(c.autosave))
+      .then((c) => {
+        if (cancelled) return;
+        coordRef.current?.setAutosaveEnabled(c.autosave);
+        setAutosaveEnabled(c.autosave);
+      })
       .catch(() => undefined);
+    return () => { cancelled = true; };
   }, [wsInfo, refreshDue]);
 
   // --- 目录树数据 ---
@@ -597,6 +618,7 @@ export function M2App() {
   // Ctrl+P 聚焦过滤框（§7.3 按文件名打开）
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
+      if (document.querySelector("dialog[open]")) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
         e.preventDefault();
         filterInputRef.current?.focus();
@@ -620,6 +642,7 @@ export function M2App() {
         setFilterQuery("");
         setFilterHits(null);
         setFileInfo(null);
+        setView("editor");
         setBanner(null);
         await loadDir("");
         setRecents(await workspaceIpc.recentList().catch(() => []));
@@ -643,6 +666,7 @@ export function M2App() {
       const coord = coordRef.current;
       if (!coord || !wsInfo) return;
       if (fileInfo?.relative === relative) {
+        setView("editor");
         editorRef.current?.focus();
         return;
       }
@@ -663,6 +687,7 @@ export function M2App() {
       const coord = coordRef.current;
       const editor = editorRef.current;
       if (!coord || !editor || !wsInfo) return;
+      setView("editor");
       try {
         const rd = await ipc.readDocument(relative);
         setBanner(null);
@@ -672,6 +697,8 @@ export function M2App() {
         editor.replaceDoc(rd.text);
         editor.focus();
         setFileInfo({ root: wsInfo.root, relative });
+        setEngineUi(null);
+        setView("editor");
         const draft = await ipc.draftRead(relative);
         if (draft.exists && draft.text != null && draft.text !== rd.text) {
           setDraftPrompt(draft);
@@ -738,6 +765,7 @@ export function M2App() {
     setBanner(null);
     setDraftPrompt(null);
     setConflictOpen(false);
+    setView("editor");
     await workspaceIpc.close().catch(() => {});
     setWsInfo(null);
     setChildrenMap({});
@@ -1347,7 +1375,7 @@ export function M2App() {
   const statusText: Record<string, string> = {
     idle: "未打开文件",
     clean: coordState?.lastSavedAtMs ? `已保存 ${fmtTime(coordState.lastSavedAtMs)}` : "已保存",
-    dirty: "未保存 · 自动保存已开启",
+    dirty: autosaveEnabled ? "未保存 · 等待自动保存" : "未保存 · 请按 Ctrl+S 保存",
     saving: "保存中…",
     conflict: "冲突 · 自动保存已暂停",
     error: `错误：${coordState?.lastError?.message ?? ""}`,
@@ -1368,43 +1396,54 @@ export function M2App() {
 
   return (
     <div className="m2-shell">
-      <aside className="sidebar">
+      <aside className="sidebar" inert={!wsInfo}>
         <div className="sidebar-head">
           <span className="brand">
             <LogoMark />
             RecallMD
           </span>
-          <span className="m2-ws-name" title={wsInfo ? wsInfo.root : ""}>
-            {wsInfo ? wsInfo.root.split(/[\\/]/).pop() : ""}
-          </span>
-          <span className="spacer" />
-          <button className="tree-act" title="切换知识库" onClick={requestSwitchWorkspace}>
-            ⇄
+        </div>
+        <div className="workspace-label" title={wsInfo?.root}>
+          <Icon name="folder" />
+          <span className="m2-ws-name">{wsInfo ? wsInfo.root.split(/[\\/]/).pop() : "知识库"}</span>
+          <span className="workspace-kind">本地知识库</span>
+          <button className="tree-act workspace-switch" title="切换知识库" aria-label="切换知识库" onClick={requestSwitchWorkspace}>
+            <Icon name="switch" />
           </button>
         </div>
         <div className="sidebar-tools">
           <button onClick={() => openNamePrompt({ mode: "new-file", dir: selectedDir })}>
-            新建文件
+            <Icon name="plus" size={15} />新建文件
           </button>
           <button onClick={() => openNamePrompt({ mode: "new-dir", dir: selectedDir })}>
-            新建文件夹
+            <Icon name="folder" size={15} />新建文件夹
           </button>
-          <button onClick={() => void refreshTree()}>刷新</button>
-          <button onClick={() => void openTrash()}>回收站</button>
         </div>
         <div className="sidebar-filter">
-          <input
-            ref={filterInputRef}
-            className="text-input"
-            placeholder="按文件名过滤（Ctrl+P）"
-            value={filterQuery}
-            onChange={(e) => setFilterQuery(e.target.value)}
-          />
+          <div className="search-field">
+            <Icon name="search" size={15} />
+            <input
+              ref={filterInputRef}
+              className="text-input"
+              placeholder="按文件名过滤"
+              aria-label="按文件名过滤（Ctrl+P）"
+              value={filterQuery}
+              onChange={(e) => setFilterQuery(e.target.value)}
+            />
+            <kbd>Ctrl P</kbd>
+          </div>
           {selectedDir && !filterActive && (
             <div className="filter-note" title={selectedDir}>
               新建目标：{selectedDir}
             </div>
           )}
+        </div>
+        <div className="sidebar-section-label">
+          <span>文件</span>
+          <div className="sidebar-file-tools">
+            <button className="tree-act" title="刷新文件列表" aria-label="刷新文件列表" onClick={() => void refreshTree()}><Icon name="refresh" size={14} /></button>
+            <button className="tree-act" title="回收站" aria-label="回收站" onClick={() => void openTrash()}><Icon name="trash" size={14} /></button>
+          </div>
         </div>
         <div className="sidebar-tree">
           {filterActive ? (
@@ -1422,7 +1461,7 @@ export function M2App() {
                     onClick={() => openFile(rel)}
                     title={rel}
                   >
-                    <span className="tree-icon file">📄</span>
+                    <span className="tree-icon file"><Icon name="file" size={16} /></span>
                     <span className="tree-name">{rel.split("/").pop()}</span>
                     <span className="filter-dir">{parentOf(rel)}</span>
                   </div>
@@ -1440,16 +1479,20 @@ export function M2App() {
           )}
         </div>
         {wsInfo && (
-          <nav className="sidebar-nav">
+          <nav className="sidebar-nav" aria-label="主要导航">
+            <button type="button" className={`nav-row${view === "editor" ? " active" : ""}`} aria-current={view === "editor" ? "page" : undefined} onClick={() => setView("editor")}>
+              <Icon name="file" /><span className="nav-label">笔记</span>
+            </button>
             <button
               type="button"
               className={`nav-row${view === "review" ? " active" : ""}`}
+              aria-current={view === "review" ? "page" : undefined}
               onClick={() => {
-                setView(view === "review" ? "editor" : "review");
+                setView("review");
                 refreshDue();
               }}
             >
-              <span>今日待复习</span>
+              <Icon name="review" /><span className="nav-label">今日待复习</span>
               {dueBadge && dueBadge.count > 0 && (
                 <span className="nav-badge">{dueBadge.count}</span>
               )}
@@ -1457,57 +1500,73 @@ export function M2App() {
             <button
               type="button"
               className={`nav-row${view === "stats" ? " active" : ""}`}
-              onClick={() => setView(view === "stats" ? "editor" : "stats")}
+              aria-current={view === "stats" ? "page" : undefined}
+              onClick={() => setView("stats")}
             >
-              <span>统计</span>
+              <Icon name="stats" /><span className="nav-label">统计</span>
             </button>
             <button
               type="button"
               className={`nav-row${view === "settings" ? " active" : ""}`}
-              onClick={() => setView(view === "settings" ? "editor" : "settings")}
+              aria-current={view === "settings" ? "page" : undefined}
+              onClick={() => { setSettingsSection("general"); setView("settings"); }}
             >
-              <span>设置</span>
+              <Icon name="settings" /><span className="nav-label">设置</span>
             </button>
           </nav>
         )}
       </aside>
 
-      <div className="main-col">
+      <div className="main-col" inert={!wsInfo}>
         {view === "editor" && (
           <header className="topbar">
+            <Icon name="file" />
             <span className="file-path" title={fileInfo ? `${fileInfo.root}\\${fileInfo.relative}` : ""}>
               {fileInfo ? fileInfo.relative : "未打开文件"}
             </span>
             <span className="spacer" />
-            <button
-              className={`icon-btn${previewMode ? " active" : ""}`}
-              disabled={!canPreview}
-              aria-pressed={previewMode}
-              title={
-                previewOversized
-                  ? "大文件（≥5 MiB 或 5 万行）预览不可用"
-                  : previewMode
-                    ? "返回编辑 (Ctrl+E)"
-                    : "Markdown 预览 (Ctrl+E)"
-              }
-              onClick={togglePreview}
-            >
-              <EyeToggleIcon off={!previewMode} />
-            </button>
-            <button
-              disabled={!fileInfo || engineDead || status === "conflict"}
-              title="为当前文件的复习块插入 ID 锚点并保存"
-              onClick={() => void handleInclude()}
-            >
-              纳入复习
-            </button>
-            <button
-              disabled={!canEdit || status === "saving"}
-              onClick={() => void handleSave()}
-            >
-              保存 (Ctrl+S)
-            </button>
+            <div className="editor-toolbar">
+              <button
+                className={`preview-toggle${previewMode ? " active" : ""}`}
+                disabled={!canPreview}
+                aria-pressed={previewMode}
+                title={
+                  previewOversized
+                    ? "大文件（≥5 MiB 或 5 万行）预览不可用"
+                    : previewMode
+                      ? "返回编辑 (Ctrl+E)"
+                      : "Markdown 预览 (Ctrl+E)"
+                }
+                onClick={togglePreview}
+              >
+                <EyeToggleIcon off={!previewMode} />
+                <span>{previewMode ? "返回编辑" : "预览"}</span>
+              </button>
+              <button
+                className={engineUi?.anchored ? "" : "primary"}
+                disabled={!fileInfo || engineDead || status === "conflict"}
+                title="将当前笔记纳入复习；会在正文中添加复习标记并保存"
+                onClick={() => void handleInclude()}
+              >
+                <Icon name="review" size={16} />纳入复习
+              </button>
+              <button
+                className={status === "dirty" && !autosaveEnabled ? "primary" : ""}
+                disabled={!canEdit || status === "saving"}
+                title="保存 (Ctrl+S)"
+                onClick={() => void handleSave()}
+              >
+                <Icon name="save" size={16} />保存 <kbd>Ctrl S</kbd>
+              </button>
+            </div>
           </header>
+        )}
+        {view === "editor" && fileInfo && (
+          <div className="document-state">
+            <span>{autosaveEnabled ? "自动保存已开启" : "手动保存模式"}</span>
+            <span>{engineDead ? "复习内容暂时无法识别" : !engineUi ? "正在识别复习内容…" : engineUi.anchored > 0 ? `已添加 ${engineUi.anchored} 个复习标记` : "尚未添加复习标记"}</span>
+            <button type="button" className="text-button" onClick={openReviewManagement}>管理复习内容</button>
+          </div>
         )}
 
         {view === "editor" && wsInfo && banner && (
@@ -1552,11 +1611,13 @@ export function M2App() {
             )}
             {wsInfo && fileInfo === null && !banner && view === "editor" && (
               <div className="welcome">
+                <div className="welcome-mark"><Icon name="file" size={30} /></div>
                 <h2>从左侧选择一个文件开始</h2>
                 <p>
-                  选中文件夹后可直接新建文件；删除的文件进入回收站，可随时恢复。
-                  保存协议的恢复材料保存在 <code>.recallmd/</code>。
+                  打开一篇笔记，继续整理你的想法。<br />
+                  也可以选中文件夹，再点击「新建文件」。
                 </p>
+                <div className="welcome-shortcuts"><span><kbd>Ctrl P</kbd> 查找文件</span><span><kbd>Ctrl S</kbd> 保存笔记</span></div>
               </div>
             )}
           </div>
@@ -1564,7 +1625,7 @@ export function M2App() {
           {/* 右侧目录：编辑/预览两态共用；点击跳转（预览滚动锚点 / 编辑光标定位） */}
           {view === "editor" && fileInfo && (
             <aside className="toc-aside">
-              <div className="toc-head">目录</div>
+              <div className="toc-head"><Icon name="list" size={15} />文档目录</div>
               <div className="toc-list">
                 {previewOversized ? (
                   <div className="toc-empty">大文件（≥5 MiB / 5 万行）目录已停用</div>
@@ -1572,7 +1633,8 @@ export function M2App() {
                   <div className="toc-empty">无标题结构</div>
                 ) : (
                   tocHeadings.map((h) => (
-                    <div
+                    <button
+                      type="button"
                       key={h.offset}
                       className="toc-item"
                       data-level={h.level}
@@ -1581,7 +1643,7 @@ export function M2App() {
                       onClick={() => jumpToHeading(h.offset)}
                     >
                       {h.text || "（无标题）"}
-                    </div>
+                    </button>
                   ))
                 )}
               </div>
@@ -1595,6 +1657,7 @@ export function M2App() {
               <ReviewPage
                 service={reviewService()}
                 onExit={() => setView("editor")}
+                onManage={openReviewManagement}
                 onDueChanged={refreshDue}
                 resolveImage={resolveImage}
               />
@@ -1604,7 +1667,9 @@ export function M2App() {
               <SettingsPage
                 service={reviewService()}
                 workspaceRoot={wsInfo?.root ?? ""}
-                onAutosaveChanged={(v) => coordRef.current?.setAutosaveEnabled(v)}
+                section={settingsSection}
+                onParticipationChanged={refreshDue}
+                onAutosaveChanged={(v) => { coordRef.current?.setAutosaveEnabled(v); setAutosaveEnabled(v); }}
               />
             )}
           </div>
@@ -1620,7 +1685,7 @@ export function M2App() {
               <>
                 <span>
                   学习历史丢失（{recoveryMode === "REBUILT_NO_HISTORY" ? "数据库被删除" : "数据库损坏已隔离"}），
-                  已从正文重建的块处于<b>暂停</b>状态，不会自动进入复习（§12.6）。
+                  已从正文找回的复习内容处于<b>暂停</b>状态，不会自动进入复习。
                 </span>
                 <button
                   disabled={repairBusy}
@@ -1656,7 +1721,7 @@ export function M2App() {
               {engineDead
                 ? "引擎不可用"
                 : engineUi
-                  ? `${engineUi.blocks} 块 · ${engineUi.anchored} 已锚定${engineUi.conflicts ? ` · ${engineUi.conflicts} 身份冲突` : ""}`
+                  ? `${engineUi.blocks} 段内容 · ${engineUi.anchored} 个复习标记${engineUi.conflicts ? ` · ${engineUi.conflicts} 处标记冲突` : ""}`
                   : "扫描中…"}
             </span>
           )}
@@ -1664,9 +1729,9 @@ export function M2App() {
             <span
               className={syncSummary.conflict || syncSummary.pendingDocs ? "bad clickable" : "clickable"}
               onClick={() => setRepairOpen(true)}
-              title="库级索引状态（点击打开身份修复）"
+              title="知识库复习信息（点击检查和修复复习标记）"
             >
-              索引 {syncSummary.active} 活跃
+              已识别 {syncSummary.active} 段
               {syncSummary.missing ? ` · ${syncSummary.missing} 缺失` : ""}
               {syncSummary.conflict ? ` · ${syncSummary.conflict} 冲突` : ""}
               {syncSummary.pendingDocs ? ` · ${syncSummary.pendingDocs} 待同步` : ""}
@@ -1686,7 +1751,7 @@ export function M2App() {
 
       {/* M4：身份冲突修复面板（§9.4 L354–360 显式操作） */}
       {repairOpen && (
-        <Modal title="身份修复（显式操作，保存前可见差异语义）">
+        <Modal title="检查与修复复习标记" onDismiss={repairBusy ? undefined : () => setRepairOpen(false)}>
           <p className="hint">
             每个操作只改动选定的锚点行，其余内容原样保存；修复后引擎重扫自动收敛身份状态。
           </p>
@@ -1738,7 +1803,7 @@ export function M2App() {
             if (missing.length === 0) return null;
             return (
               <div className="repair-missing">
-                <h4>缺失的旧 ID（可恢复原历史，§9.4 L357）</h4>
+                <h4>缺失的复习标记（可关联原有学习记录）</h4>
                 <ul className="repair-list">
                   {missing.map((b) => (
                     <MissingIdRow
@@ -1772,21 +1837,27 @@ export function M2App() {
         </Modal>
       )}
 
-      {toast && <div className="toast">{toast}</div>}
+      {toast && <div className="toast" role="status">{toast}</div>}
 
       {/* 启动屏：未打开 workspace 时覆盖整个应用 */}
       {!wsInfo && (
         <div className="start-screen">
           <div className="start-card">
             <div className="start-brand">
-              <LogoMark size={44} />
+              <LogoMark size={36} />
               <h2>RecallMD</h2>
             </div>
-            <p className="hint">
+            <div className="start-intro">
+              <span className="eyebrow">你的本地知识库</span>
+              <h1>让笔记，成为记忆。</h1>
+              <p>专注记录，用每一次回忆，留住学过的知识。</p>
+            </div>
+            <p className="hint start-note">选择存放 Markdown 笔记的本地文件夹，开始记录与复习。</p>
+            <details className="start-details"><summary>存储位置与磁盘要求</summary><p className="hint">
               打开一个文件夹作为知识库。首次打开会在该文件夹创建
               <code>.recallmd/</code>元数据目录（恢复材料与操作日志）；
               仅支持本机固定磁盘 NTFS 分区。
-            </p>
+            </p></details>
             {wsError && (
               <div className="banner banner-error start-error">
                 <span>
@@ -1797,7 +1868,7 @@ export function M2App() {
               </div>
             )}
             <button className="primary" onClick={() => void pickWorkspace()}>
-              选择知识库文件夹…
+              <Icon name="folder" />选择知识库文件夹…<Icon name="arrow" />
             </button>
             {recents.length > 0 && (
               <>
@@ -1815,9 +1886,10 @@ export function M2App() {
                       <button
                         className="tree-act"
                         title="从最近列表移除"
+                        aria-label={`从最近列表移除 ${r.name}`}
                         onClick={() => void forgetRecent(r.root)}
                       >
-                        ✕
+                        <Icon name="close" size={16} />
                       </button>
                     </div>
                   ))}
@@ -1863,12 +1935,12 @@ export function M2App() {
               本地另存为新文件…
             </button>
           </div>
-          <p className="hint">暂不提供三方自动合并；M7 提供手动合并流程。</p>
+          <p className="hint">请选择要保留的版本；也可以先将本地内容另存为新文件。</p>
         </Modal>
       )}
 
       {saveAsOpen && (
-        <Modal title="另存为新文件（同目录）">
+        <Modal title="另存为新文件（同目录）" onDismiss={() => setSaveAsOpen(false)}>
           <input
             className="text-input"
             value={saveAsName}
@@ -1887,7 +1959,7 @@ export function M2App() {
       )}
 
       {switchGuard && (
-        <Modal title="有未保存的修改">
+        <Modal title="有未保存的修改" onDismiss={() => void guardResolve("cancel")}>
           <p>切换前请选择：保存（失败会停留）或放弃（草稿写入恢复区，可再次打开时恢复）。</p>
           <div className="modal-actions">
             <button className="primary" onClick={() => void guardResolve("save")}>
@@ -1901,6 +1973,7 @@ export function M2App() {
 
       {namePrompt && (
         <Modal
+          onDismiss={() => setNamePrompt(null)}
           title={
             namePrompt.mode === "new-file"
               ? `新建文件${namePrompt.dir ? `（在 ${namePrompt.dir} 内）` : "（在根目录）"}`
@@ -1927,7 +2000,7 @@ export function M2App() {
       )}
 
       {moveDialog && (
-        <Modal title={`移动 / 重命名：${moveDialog.entry.relativePath}`}>
+        <Modal title={`移动 / 重命名：${moveDialog.entry.relativePath}`} onDismiss={() => setMoveDialog(null)}>
           <p className="hint">选择目标文件夹并确认名称；同知识库内移动，不会覆盖已有文件。</p>
           <div className="dir-picker-box">
             <DirPickerTree
@@ -1978,7 +2051,7 @@ export function M2App() {
       )}
 
       {deleteConfirm && (
-        <Modal title={`删除：${deleteConfirm.entry.relativePath}`}>
+        <Modal title={`删除：${deleteConfirm.entry.relativePath}`} onDismiss={() => setDeleteConfirm(null)}>
           <p>
             {deleteConfirm.preview.kind === "DIR"
               ? `将删除该文件夹及其内容：${deleteConfirm.preview.fileCount} 个文件、${deleteConfirm.preview.dirCount} 个子目录。`
@@ -2005,7 +2078,8 @@ export function M2App() {
       )}
 
       {trashOpen && (
-        <Modal title="回收站（库内 .recallmd/trash，不自动清空）">
+        <Modal title="回收站" onDismiss={() => setTrashOpen(false)}>
+          <p className="hint">删除的文件保存在当前知识库内，不会自动清空。</p>
           {trashEntries.length === 0 ? (
             <p className="hint">回收站为空。</p>
           ) : (
@@ -2032,7 +2106,7 @@ export function M2App() {
       )}
 
       {restorePrompt && (
-        <Modal title={`原位置被占用：${restorePrompt.entry.originalRelativePath}`}>
+        <Modal title={`原位置被占用：${restorePrompt.entry.originalRelativePath}`} onDismiss={() => setRestorePrompt(null)}>
           <p>不会覆盖现存文件，请提供新的恢复路径。</p>
           <input
             className="text-input"
@@ -2050,17 +2124,6 @@ export function M2App() {
           </div>
         </Modal>
       )}
-    </div>
-  );
-}
-
-function Modal({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="modal-overlay">
-      <div className="modal">
-        <h3>{title}</h3>
-        {children}
-      </div>
     </div>
   );
 }

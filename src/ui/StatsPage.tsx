@@ -36,7 +36,11 @@ export function StatsPage({ service }: { service: ReviewService }) {
   return (
     <div className="stats-page">
       <header className="page-header">
-        <h2>统计</h2>
+        <div>
+          <span className="eyebrow">学习足迹</span>
+          <h2>统计</h2>
+          <p className="page-description">回顾每一次练习，了解当前的复习状态。</p>
+        </div>
         <button type="button" className="btn" onClick={refresh}>
           刷新
         </button>

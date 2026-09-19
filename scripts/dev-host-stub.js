@@ -135,12 +135,45 @@
     },
   ];
 
+  // Derive the first sample block's range from its displayed document.
+  QUEUE_ITEMS[0].startOffset = DOC.indexOf("## 《认知天性》摘录");
+  QUEUE_ITEMS[0].bodyStartOffset = DOC.indexOf("让学习看起来更吃力的方法");
+  QUEUE_ITEMS[0].endOffset = DOC.indexOf("\n## 间隔重复原理");
+
+  // In-memory demo state for exercising pause → restore and settings feedback.
+  var config = { dailyNewLimit: 20, autosave: true };
+  var participation = {};
+  QUEUE_ITEMS.forEach(function (item) { participation[item.blockId] = "ENABLED"; });
+  var pausedSample = Object.assign({}, QUEUE_ITEMS[0], { blockId: "6a0e2d73-a75b-4a89-b8a2-680a5e7da220", title: "动态规划的状态转移", relativePath: "算法/动态规划.md" });
+  var excludedSample = Object.assign({}, QUEUE_ITEMS[0], { blockId: "9c0317b4-1d51-4e1f-9b71-83f449e76ca0", title: "间隔重复原理" });
+  QUEUE_ITEMS.push(pausedSample, excludedSample);
+  participation[pausedSample.blockId] = "PAUSED";
+  participation[excludedSample.blockId] = "EXCLUDED";
+
+  function registryResult() {
+    return { documents: [], recoveryMode: null, blocks: QUEUE_ITEMS.map(function (item, i) {
+      return {
+        blockId: item.blockId, documentId: "demo-doc-" + i, relativePath: item.relativePath,
+        kind: "HEADING", headingLevel: 2, title: item.title, headingPath: item.headingPath,
+        ordinal: i, startOffset: item.startOffset, bodyStartOffset: item.bodyStartOffset, endOffset: item.endOffset,
+        sourceHash: "demo", bodyHash: "demo", contentVersion: 1, status: "ACTIVE", statusReason: null,
+        participation: participation[item.blockId], needsRecheck: false, hasRating: !item.neverRated,
+        missingSince: null, lastSeenAt: now,
+      };
+    }) };
+  }
+
   function queueResult() {
+    var items = QUEUE_ITEMS.filter(function (item) { return participation[item.blockId] === "ENABLED"; });
     return {
       nowMs: now,
-      items: QUEUE_ITEMS,
-      counts: { learning: 1, review: 2, newTotal: 1 },
-      quota: { limit: 20, usedToday: 3, remaining: 17 },
+      items: items,
+      counts: {
+        learning: items.filter(function (item) { return !item.neverRated && item.phase === "Learning"; }).length,
+        review: items.filter(function (item) { return !item.neverRated && item.phase !== "Learning"; }).length,
+        newTotal: items.filter(function (item) { return item.neverRated; }).length,
+      },
+      quota: { limit: config.dailyNewLimit, usedToday: 3, remaining: Math.max(0, config.dailyNewLimit - 3) },
       nextUpcomingAt: now + 42 * MIN,
     };
   }
@@ -161,11 +194,32 @@
         phase: item ? item.phase : "Review",
         generation: 1,
         stateRevision: 1,
-        algorithmId: "FSRS",
-        algorithmVersion: "stub",
+        // Match the frozen adapter so the browser can render interval previews.
+        // These sample values never reach the native host or production bundle.
+        algorithmId: "fsrs",
+        algorithmVersion: "ts-fsrs@5.4.2+FSRS-6.0",
         stateSchemaVersion: 1,
-        configJson: "{}",
-        stateJson: "{}",
+        configJson: JSON.stringify({
+          request_retention: 0.9,
+          maximum_interval: 3650,
+          w: [0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722, 0.1666, 0.796, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542],
+          enable_fuzz: false,
+          enable_short_term: true,
+          learning_steps: ["1m", "10m"],
+          relearning_steps: ["10m"],
+        }),
+        stateJson: JSON.stringify({
+          due: new Date(now - HOUR).toISOString(),
+          stability: 5.2,
+          difficulty: 5.8,
+          elapsed_days: 3,
+          scheduled_days: 3,
+          reps: 6,
+          lapses: 1,
+          learning_steps: 0,
+          state: item && item.phase === "Learning" ? 1 : 2,
+          last_review: new Date(now - 3 * DAY).toISOString(),
+        }),
         scheduledDueAt: now - HOUR,
         changeDueAt: null,
         nextReviewAt: now - HOUR,
@@ -228,18 +282,32 @@
       return beginResult(a.blockId);
     },
     review_stats: function () {
-      return STATS;
+      return Object.assign({}, STATS, {
+        due: queueResult().counts,
+        enabled: Object.values(participation).filter(function (v) { return v === "ENABLED"; }).length,
+        paused: Object.values(participation).filter(function (v) { return v === "PAUSED"; }).length,
+        excluded: Object.values(participation).filter(function (v) { return v === "EXCLUDED"; }).length,
+      });
     },
     app_config_read: function () {
-      return { dailyNewLimit: 20, autosave: true };
+      return Object.assign({}, config);
     },
-    app_config_set: function () {},
-    review_set_participation: function () {
-      return 1;
+    app_config_set: function (a) {
+      if (a.key === "editor.autosave") config.autosave = a.value === "1";
+      if (a.key === "review.daily_new_limit") config.dailyNewLimit = Number(a.value);
+    },
+    review_set_participation: function (a) {
+      var transitions = { PAUSE: ["ENABLED", "PAUSED"], RESUME: ["PAUSED", "ENABLED"], EXCLUDE: ["ENABLED", "EXCLUDED"], INCLUDE: ["EXCLUDED", "ENABLED"] };
+      var transition = transitions[a.action];
+      if (!transition || a.blockIds.some(function (id) { return participation[id] !== transition[0]; })) {
+        throw { code: "REVIEW_REJECTED", message: "参与状态已经变化，请刷新列表后重试。" };
+      }
+      a.blockIds.forEach(function (id) { participation[id] = transition[1]; });
+      return a.blockIds.length;
     },
     review_set_prompt: function () {},
     registry_read: function () {
-      return { documents: [], blocks: [], recoveryMode: null };
+      return registryResult();
     },
     recovery_status: function () {
       return {
@@ -276,6 +344,8 @@
   };
 
   var cbSeq = 1;
+  // The browser stub has no native event registry; StrictMode cleanup is a no-op.
+  window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: function () {} };
   window.__TAURI_INTERNALS__ = {
     metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
     plugins: {},
@@ -304,8 +374,10 @@
           clearInterval(clickInterval);
         }
       } else {
-        var idx = { review: 0, stats: 1, settings: 2 }[demo];
-        var nav = document.querySelectorAll(".sidebar-nav .nav-row")[idx];
+        var label = { review: "今日待复习", stats: "统计", settings: "设置" }[demo];
+        var nav = Array.from(document.querySelectorAll(".sidebar-nav .nav-row")).find(function (button) {
+          return label && button.textContent.includes(label);
+        });
         if (nav) {
           nav.click();
           clearInterval(clickInterval);

@@ -10,6 +10,7 @@ import { MarkdownView } from "./MarkdownView";
 import type { PreviewItem, RatingName } from "../review/scheduler";
 import type { ReviewService } from "../review/service";
 import type { QueueItemDto, ReviewQueueResultDto } from "../review/ipc";
+import { Modal } from "./Modal";
 
 const RATING_LABELS: readonly { name: RatingName; key: string; hint: string; tier: string }[] = [
   { name: "Again", key: "1", hint: "没回忆起来", tier: "again" },
@@ -39,13 +40,14 @@ type Phase = "loading" | "hidden" | "revealed" | "done";
 interface Props {
   service: ReviewService;
   onExit: () => void;
+  onManage: () => void;
   /** 评分/参与变化后通知外层刷新侧栏到期角标 */
   onDueChanged: () => void;
   /** 工作区相对路径图片 → asset URL（M9 本地图片；由持有 workspace 根的 M2App 注入） */
   resolveImage?: (rel: string) => string | null;
 }
 
-export function ReviewPage({ service, onExit, onDueChanged, resolveImage }: Props) {
+export function ReviewPage({ service, onExit, onManage, onDueChanged, resolveImage }: Props) {
   const [queueInfo, setQueueInfo] = useState<ReviewQueueResultDto | null>(null);
   const [session, setSession] = useState<QueueItemDto[]>([]);
   const [index, setIndex] = useState(0);
@@ -62,6 +64,9 @@ export function ReviewPage({ service, onExit, onDueChanged, resolveImage }: Prop
   const [busy, setBusy] = useState(false);
   const [promptDraft, setPromptDraft] = useState("");
   const [ratedCount, setRatedCount] = useState(0);
+  const [excludeConfirm, setExcludeConfirm] = useState(false);
+  const participationBusyRef = useRef(false);
+  const moreRef = useRef<HTMLDetailsElement>(null);
   const beginRef = useRef<Awaited<ReturnType<ReviewService["begin"]>> | null>(null);
   const startedAtRef = useRef(0);
   const requestIdRef = useRef<string | null>(null);
@@ -84,6 +89,8 @@ export function ReviewPage({ service, onExit, onDueChanged, resolveImage }: Prop
         return;
       }
       setPhase("loading");
+      setExcludeConfirm(false);
+      if (moreRef.current) moreRef.current.open = false;
       setError(null);
       setBodyText(null);
       setFullText(null);
@@ -247,25 +254,32 @@ export function ReviewPage({ service, onExit, onDueChanged, resolveImage }: Prop
   );
 
   const skip = useCallback(() => {
-    if (!currentItem || busy) return;
+    if (!currentItem || busy || phase === "loading") return;
     skippedRef.current.add(currentItem.blockId);
     flashInfo("已跳过（仅本会话，到期安排不变）");
     advance(index);
-  }, [currentItem, busy, advance, index, flashInfo]);
+  }, [currentItem, busy, phase, advance, index, flashInfo]);
 
   const pause = useCallback(
     async (action: "PAUSE" | "EXCLUDE") => {
-      if (!currentItem || busy) return;
+      if (!currentItem || busy || participationBusyRef.current || phase === "loading") return;
+      participationBusyRef.current = true;
+      setBusy(true);
+      setError(null);
       try {
         await service.setParticipation([currentItem.blockId], action);
-        flashInfo(action === "PAUSE" ? "已暂停，恢复复习时再回来" : "已永久排除，可在设置外手动恢复");
+        setExcludeConfirm(false);
+        flashInfo(action === "PAUSE" ? "已暂停。可在「设置 → 复习内容管理」恢复，学习进度已保留。" : "已排除。可在「设置 → 复习内容管理」重新纳入，学习进度已保留。");
         onDueChanged();
         advance(index);
       } catch (e) {
         setError(e as HostErrorShape);
+      } finally {
+        participationBusyRef.current = false;
+        setBusy(false);
       }
     },
-    [currentItem, busy, service, advance, index, flashInfo, onDueChanged],
+    [currentItem, busy, phase, service, advance, index, flashInfo, onDueChanged],
   );
 
   const savePrompt = useCallback(async () => {
@@ -288,7 +302,7 @@ export function ReviewPage({ service, onExit, onDueChanged, resolveImage }: Prop
   keyState.current = { phase, resolution, needsRecheck, rate, reveal, onExit };
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.isComposing) return;
+      if (e.isComposing || document.querySelector("dialog[open]")) return;
       const target = e.target as HTMLElement | null;
       if (
         target &&
@@ -304,6 +318,8 @@ export function ReviewPage({ service, onExit, onDueChanged, resolveImage }: Prop
         s.onExit();
         return;
       }
+      // Space must still activate the focused button/summary rather than reveal a card.
+      if (target?.closest("button, a, summary")) return;
       if (e.key === " ") {
         if (s.phase === "hidden") {
           e.preventDefault();
@@ -351,7 +367,8 @@ export function ReviewPage({ service, onExit, onDueChanged, resolveImage }: Prop
           )}
         </div>
         <div className="review-header-actions">
-          <button type="button" className="btn" onClick={() => void loadQueue(true)}>
+          <button type="button" className="btn" onClick={onManage} disabled={busy}>管理复习内容</button>
+          <button type="button" className="btn" disabled={busy || phase === "loading"} onClick={() => void loadQueue(true)}>
             刷新
           </button>
           <button type="button" className="btn" onClick={onExit}>
@@ -364,13 +381,13 @@ export function ReviewPage({ service, onExit, onDueChanged, resolveImage }: Prop
         <i style={{ width: `${progressPct}%` }} />
       </div>
 
-      {info && <div className="review-toast">{info}</div>}
+      {info && <div className="review-toast" role="status">{info}</div>}
       {error && (
-        <div className="review-error">
+        <div className="review-error" role="alert">
           <span>
             {error.code === "TIME_ANOMALY"
               ? "系统时钟异常，评分已暂停，请检查系统时间后重试"
-              : `${error.message}（评分未记录，重新点击评分按钮即可重试）`}
+              : `${error.message}（操作未完成，请重试）`}
           </span>
         </div>
       )}
@@ -425,17 +442,18 @@ export function ReviewPage({ service, onExit, onDueChanged, resolveImage }: Prop
             {currentItem.title ?? `${currentItem.relativePath} · 前言`}
           </h2>
           <div className="review-meta">
-            <span>{currentItem.phase}</span>
+            <span>{({ NEW: "新内容", LEARNING: "学习中", REVIEW: "复习中", RELEARNING: "重新学习中" } as Record<string, string>)[currentItem.phase.toUpperCase()] ?? currentItem.phase}</span>
             {currentItem.neverRated && <span className="tag-new">新内容</span>}
             {needsRecheck && <span className="tag-changed">正文已变更</span>}
           </div>
 
           <div className="review-prompt-row">
-            <span className="review-prompt-label">回忆提示</span>
+            <label className="review-prompt-label" htmlFor="recall-prompt">回忆提示</label>
             <input
+              id="recall-prompt"
               className="review-prompt-input"
               value={promptDraft}
-              placeholder="（可选）一句话提示，保存在本地索引"
+              placeholder="用一句话提示自己要回忆什么（可选）"
               maxLength={200}
               onChange={(e) => setPromptDraft(e.target.value)}
               onKeyDown={(e) => {
@@ -495,20 +513,6 @@ export function ReviewPage({ service, onExit, onDueChanged, resolveImage }: Prop
                 >
                   展开上下文正文
                 </button>
-                <button type="button" className="btn" onClick={skip} disabled={busy}>
-                  跳过
-                </button>
-                <button type="button" className="btn" onClick={() => void pause("PAUSE")} disabled={busy}>
-                  暂停
-                </button>
-                <button
-                  type="button"
-                  className="btn danger"
-                  onClick={() => void pause("EXCLUDE")}
-                  disabled={busy}
-                >
-                  永久排除
-                </button>
               </div>
             </>
           )}
@@ -517,7 +521,7 @@ export function ReviewPage({ service, onExit, onDueChanged, resolveImage }: Prop
             <>
               {contextRaw != null && (
                 <details className="review-context" open>
-                  <summary>上下文（已记录 context_used）</summary>
+                  <summary>上下文（本次复习已记录为使用上下文提示）</summary>
                   <pre>{contextRaw}</pre>
                 </details>
               )}
@@ -546,8 +550,8 @@ export function ReviewPage({ service, onExit, onDueChanged, resolveImage }: Prop
                       title={`${r.hint}（键盘 ${r.key}）`}
                       onClick={() => void rate(r.name)}
                     >
-                      <span className="rate-name">{r.name}</span>
-                      <span className="rate-hint">{r.hint}</span>
+                      <span className="rate-name">{r.hint}</span>
+                      <span className="rate-hint">{r.name}</span>
                       <span className="rate-interval">
                         {p ? formatIntervalMs(p.intervalMs) : "…"}
                       </span>
@@ -561,7 +565,32 @@ export function ReviewPage({ service, onExit, onDueChanged, resolveImage }: Prop
               </div>
             </>
           )}
+          {(phase === "hidden" || phase === "revealed") && (
+            <div className="review-secondary-actions">
+              <button type="button" className="text-button" onClick={skip} disabled={busy}>跳过本题</button>
+              <span className="hint">仅本轮跳过，不改变复习安排</span>
+              <details className="review-more" ref={moreRef}>
+                <summary>更多操作</summary>
+                <div className="review-more-content">
+                  <p className="hint">暂停或排除后，可在「设置 → 复习内容管理」恢复。</p>
+                  <button type="button" disabled={busy} onClick={() => void pause("PAUSE")}>暂停复习</button>
+                  <button type="button" className="danger" disabled={busy} onClick={() => { setError(null); setExcludeConfirm(true); }}>排除此内容…</button>
+                </div>
+              </details>
+            </div>
+          )}
         </section>
+      )}
+      {excludeConfirm && currentItem && (
+        <Modal title="排除此内容？" onDismiss={busy ? undefined : () => setExcludeConfirm(false)}>
+          <p>「{currentItem.title ?? "前言"}」将不再进入复习队列。笔记正文和学习进度会保留。</p>
+          <p className="hint">以后可以在「设置 → 复习内容管理 → 已排除」重新纳入。</p>
+          {error && <p className="review-error" role="alert">{error.message}</p>}
+          <div className="modal-actions">
+            <button type="button" className="danger" disabled={busy} onClick={() => void pause("EXCLUDE")}>{busy ? "正在排除…" : "确认排除"}</button>
+            <button type="button" disabled={busy} onClick={() => setExcludeConfirm(false)}>取消</button>
+          </div>
+        </Modal>
       )}
     </div>
   );

@@ -1,7 +1,7 @@
 // M6 设置页（§16 Settings）：Workspace 信息、时区、新内容日配额、
 // 自动保存开关、外观主题（M9）、备份/恢复入口、诊断与版本。备份命令层 M4 已全量就绪。
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { indexIpc } from "../index/ipc";
 import type { HostErrorShape } from "../editor/ipc";
@@ -9,6 +9,7 @@ import { ALGORITHM_ID, ALGORITHM_VERSION, STATE_SCHEMA_VERSION } from "../review
 import type { DbBackupEntryDto, FullBackupResultDto } from "../index/ipc";
 import type { ReviewService } from "../review/service";
 import { getThemePref, setThemePref, type ThemePref } from "./theme";
+import { ParticipationManager } from "./ParticipationManager";
 
 function tzDisplay(): string {
   const opts = Intl.DateTimeFormat().resolvedOptions();
@@ -22,18 +23,32 @@ export function SettingsPage({
   service,
   workspaceRoot,
   onAutosaveChanged,
+  onParticipationChanged,
+  section = "general",
 }: {
   service: ReviewService;
   workspaceRoot: string;
   onAutosaveChanged: (enabled: boolean) => void;
+  onParticipationChanged: () => void;
+  section?: "general" | "participation";
 }) {
   const [dailyLimit, setDailyLimit] = useState<number | null>(null);
+  const [savedLimit, setSavedLimit] = useState<number | null>(null);
+  const [configLoaded, setConfigLoaded] = useState(false);
   const [autosave, setAutosave] = useState(true);
   const [themePref, setThemePrefState] = useState<ThemePref>(() => getThemePref());
   const [backups, setBackups] = useState<DbBackupEntryDto[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<HostErrorShape | null>(null);
+  const managerRef = useRef<HTMLDivElement>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const target = section === "participation" ? managerRef.current : pageRef.current;
+    target?.scrollIntoView({ block: "start" });
+    if (section === "participation") managerRef.current?.focus({ preventScroll: true });
+  }, [section]);
 
   const flash = useCallback((msg: string) => {
     setMessage(msg);
@@ -46,7 +61,9 @@ export function SettingsPage({
       .appConfig()
       .then((c) => {
         setDailyLimit(c.dailyNewLimit);
+        setSavedLimit(c.dailyNewLimit);
         setAutosave(c.autosave);
+        setConfigLoaded(true);
       })
       .catch((e) => setError(e as HostErrorShape));
     indexIpc
@@ -56,10 +73,11 @@ export function SettingsPage({
   }, [service]);
 
   const saveLimit = useCallback(async () => {
-    if (dailyLimit == null) return;
+    if (dailyLimit == null || !Number.isInteger(dailyLimit) || dailyLimit < 0 || dailyLimit > 100) return;
     setBusy("limit");
     try {
       await service.setAppConfig("review.daily_new_limit", String(dailyLimit));
+      setSavedLimit(dailyLimit);
       flash(`新内容日配额已设为 ${dailyLimit}`);
     } catch (e) {
       setError(e as HostErrorShape);
@@ -151,15 +169,19 @@ export function SettingsPage({
   }, []);
 
   return (
-    <div className="settings-page">
+    <div className="settings-page" ref={pageRef}>
       <header className="page-header">
-        <h2>设置</h2>
+        <div>
+          <span className="eyebrow">你的工作空间</span>
+          <h2>设置</h2>
+          <p className="page-description">调整阅读偏好，管理知识库与备份。</p>
+        </div>
       </header>
-      {message && <div className="review-toast">{message}</div>}
-      {error && <div className="review-error">{error.message}</div>}
+      {message && <div className="review-toast" role="status">{message}</div>}
+      {error && <div className="review-error" role="alert">{error.message}</div>}
 
       <section className="stats-section">
-        <h3>外观</h3>
+        <h3>外观 <span className="setting-behavior">更改后立即生效</span></h3>
         <div className="settings-row" role="radiogroup" aria-label="主题">
           <span className="settings-row-label">主题</span>
           {(
@@ -187,7 +209,7 @@ export function SettingsPage({
       <section className="stats-section">
         <h3>知识库</h3>
         <dl className="settings-kv">
-          <dt>Workspace 路径</dt>
+          <dt>知识库路径</dt>
           <dd>{workspaceRoot}</dd>
           <dt>时区（只影响显示与日配额分界）</dt>
           <dd>{tzDisplay()}</dd>
@@ -197,30 +219,41 @@ export function SettingsPage({
       <section className="stats-section">
         <h3>复习</h3>
         <div className="settings-row">
-          <label htmlFor="daily-limit">新内容日配额（0–100，每天最多首次评分的新块数）</label>
+          <label htmlFor="daily-limit">每天学习的新内容上限</label>
           <input
             id="daily-limit"
             type="number"
             min={0}
             max={100}
+            step={1}
+            disabled={!configLoaded || busy === "limit"}
+            aria-describedby="daily-limit-help"
             value={dailyLimit ?? ""}
             onChange={(e) => setDailyLimit(e.target.value === "" ? null : Number(e.target.value))}
           />
-          <button type="button" className="btn" disabled={busy === "limit" || dailyLimit == null} onClick={() => void saveLimit()}>
-            保存
+          <button type="button" className="btn" disabled={!configLoaded || busy !== null || dailyLimit == null || !Number.isInteger(dailyLimit) || dailyLimit < 0 || dailyLimit > 100 || dailyLimit === savedLimit} onClick={() => void saveLimit()}>
+            {busy === "limit" ? "保存中…" : "保存上限"}
           </button>
+          {configLoaded && dailyLimit !== savedLimit && <span className="setting-unsaved" role="status">尚未保存</span>}
         </div>
+        <p className="hint" id="daily-limit-help">填写 0–100 的整数，点击「保存上限」后生效。只限制每天首次评分的新内容。</p>
         <div className="settings-row">
-          <label htmlFor="autosave">自动保存（关闭后仅 Ctrl+S 手动保存；草稿兜底不受影响）</label>
+          <label htmlFor="autosave">自动保存</label>
           <input
             id="autosave"
             type="checkbox"
             checked={autosave}
-            disabled={busy === "autosave"}
+            disabled={!configLoaded || busy !== null}
             onChange={() => void toggleAutosave()}
           />
+          <span className="setting-behavior">{busy === "autosave" ? "正在保存…" : "更改后立即生效"}</span>
         </div>
+        <p className="hint">关闭后请使用 Ctrl+S 手动保存；恢复草稿仍会保留。</p>
       </section>
+
+      <div ref={managerRef} tabIndex={-1} className="manager-anchor">
+        <ParticipationManager service={service} onChanged={onParticipationChanged} />
+      </div>
 
       <section className="stats-section">
         <h3>备份与恢复</h3>
@@ -267,8 +300,8 @@ export function SettingsPage({
         {backups != null && backups.length === 0 && <p className="stats-empty">尚无每日备份（每天首次打开自动创建）。</p>}
       </section>
 
-      <section className="stats-section">
-        <h3>诊断与版本</h3>
+      <details className="stats-section technical-details">
+        <summary>诊断与版本 · 技术详情</summary>
         <dl className="settings-kv">
           <dt>调度算法（冻结）</dt>
           <dd>
@@ -277,7 +310,7 @@ export function SettingsPage({
           <dt>参数</dt>
           <dd>request_retention 0.90 · maximum_interval 3650 天 · 短期学习 1m/10m · 重学 10m</dd>
         </dl>
-      </section>
+      </details>
     </div>
   );
 }

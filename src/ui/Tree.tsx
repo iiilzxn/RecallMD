@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactElement } from "react";
 import { workspaceIpc, type TreeEntryDto } from "../workspace/ipc";
+import { Icon } from "./Icon";
 
 /** 树图标（M8 视觉：SVG 替换 emoji，尺寸随 16px 网格） */
 function ChevronIcon() {
@@ -17,8 +18,8 @@ function FolderIcon({ open }: { open?: boolean }) {
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
       <path
         d="M1.8 3.6c0-.55.45-1 1-1h3l1.5 1.7h5.9c.55 0 1 .45 1 1v7.1c0 .55-.45 1-1 1H2.8c-.55 0-1-.45-1-1z"
-        fill={open ? "#f3e8cd" : "#f8f0dd"}
-        stroke="#d3a756"
+        fill={open ? "var(--accent-soft)" : "none"}
+        stroke="currentColor"
         strokeWidth="1.1"
         strokeLinejoin="round"
       />
@@ -31,12 +32,12 @@ function FileIcon() {
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
       <path
         d="M4.3 1.7h4.4l3 3v9c0 .55-.45 1-1 1H4.3c-.55 0-1-.45-1-1v-11c0-.55.45-1 1-1z"
-        fill="#fff"
-        stroke="#96a3b3"
+        fill="none"
+        stroke="currentColor"
         strokeWidth="1.1"
         strokeLinejoin="round"
       />
-      <path d="M8.6 1.9v3h2.9" stroke="#96a3b3" strokeWidth="1.1" strokeLinejoin="round" />
+      <path d="M8.6 1.9v3h2.9" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -99,23 +100,26 @@ function TreeRow({
           <button
             className="tree-act"
             title="重命名"
+            aria-label={`重命名 ${entry.name}`}
             onClick={() => actions.onEntryAction(entry, "rename")}
           >
-            ✎
+            <Icon name="edit" size={14} />
           </button>
           <button
             className="tree-act"
             title="移动"
+            aria-label={`移动 ${entry.name}`}
             onClick={() => actions.onEntryAction(entry, "move")}
           >
-            ➜
+            <Icon name="arrow" size={14} />
           </button>
           <button
             className="tree-act danger"
             title="删除（移入回收站）"
+            aria-label={`删除 ${entry.name}（移入回收站）`}
             onClick={() => actions.onEntryAction(entry, "delete")}
           >
-            ✕
+            <Icon name="trash" size={14} />
           </button>
         </span>
       </div>
