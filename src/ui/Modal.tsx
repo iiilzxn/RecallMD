@@ -3,11 +3,12 @@ import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
 
 /** Native modal dialogs isolate keyboard focus and support stacked confirmations. */
-export function Modal({ title, children, onDismiss }: {
+export function Modal({ title, children, onDismiss, className = "" }: {
   title: string;
   children: ReactNode;
   /** Omit for decisions that must be resolved explicitly, e.g. a save conflict. */
   onDismiss?: () => void;
+  className?: string;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const openerRef = useRef(document.activeElement as HTMLElement | null);
@@ -28,7 +29,7 @@ export function Modal({ title, children, onDismiss }: {
   return createPortal(
     <dialog
       ref={dialogRef}
-      className="modal"
+      className={`modal ${className}`.trim()}
       aria-labelledby={titleId}
       tabIndex={-1}
       onCancel={(event) => {

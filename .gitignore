@@ -5,6 +5,8 @@ dist/
 # Tauri / Rust
 src-tauri/target/
 src-tauri/gen/schemas/
+src-tauri/resources/speech-runtime/
+scripts/asr/__pycache__/
 
 # 编辑器与系统
 .vscode/

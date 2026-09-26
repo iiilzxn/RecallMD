@@ -177,6 +177,7 @@ export interface MarkdownCtx {
   navigateId?: (id: string) => void;
   /** 容器内按锚点片段滚动（#锚点，尝试 slug 与原文两种 id） */
   navigateAnchor?: (frag: string) => void;
+  renderHeadingActions?: (heading: TocHeading) => ReactNode;
 }
 
 /** 外链/相对资源点击：永不放行 WebView 导航；能处理的交给回调 */
@@ -471,11 +472,17 @@ function renderBlock(n: MdNode, i: number, ctx: MarkdownCtx): ReactNode {
       const Tag = `h${Math.min(Math.max(n.depth ?? 1, 1), 6)}` as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
       const off = n.position?.start?.offset;
       const slug = off != null ? ctx.headingSlugs.get(off) : undefined;
-      return (
+      const heading = (
         <Tag key={key} id={slug ? `${ctx.idPrefix}${slug}` : undefined} data-offset={off != null ? off : undefined}>
           {inlines(n, ctx)}
         </Tag>
       );
+      const actions = slug != null && off != null
+        ? ctx.renderHeadingActions?.({ offset: off, level: n.depth ?? 1, text: extractText(n).trim(), slug })
+        : null;
+      return actions ? <div key={key} className="md-heading-with-actions" data-level={n.depth ?? 1}>
+        {heading}{actions}
+      </div> : heading;
     }
     case "paragraph":
       return <p key={key}>{inlines(n, ctx)}</p>;
@@ -722,6 +729,8 @@ export interface RenderOpts {
   /** 容器内滚动导航（脚注/锚点可点性由其存在决定） */
   navigateId?: (id: string) => void;
   navigateAnchor?: (frag: string) => void;
+  /** 仅为根级标题添加操作，不改变 Markdown 文本、锚点或指纹。 */
+  renderHeadingActions?: (heading: TocHeading) => ReactNode;
 }
 
 export function renderMarkdown(text: string, opts: RenderOpts): ReactNode[] {
@@ -767,6 +776,7 @@ export function renderMarkdown(text: string, opts: RenderOpts): ReactNode[] {
     onExternalLink: opts.onExternalLink,
     navigateId: opts.navigateId,
     navigateAnchor: opts.navigateAnchor,
+    renderHeadingActions: opts.renderHeadingActions,
   };
   return [...renderBlockSeq(root.children, ctx), renderFootnoteSection(ctx)].filter(
     (x): x is ReactNode => x !== null,
@@ -815,6 +825,7 @@ export interface MarkdownViewProps {
   /** 外链/相对资源 → 提示（无 opener 插件，不在 WebView 内导航） */
   onExternalLink?: (url: string) => void;
   className?: string;
+  renderHeadingActions?: (heading: TocHeading) => ReactNode;
 }
 
 /** 只读受控渲染：memo 后 text 不变不重解析（预览快照仅在切换/系统边界刷新，§15.2） */
@@ -826,6 +837,7 @@ export const MarkdownView = memo(function MarkdownView({
   onOpenRelative,
   onExternalLink,
   className,
+  renderHeadingActions,
 }: MarkdownViewProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   // React useId 含 ":"（querySelector 需转义），换成安全字符集
@@ -869,9 +881,10 @@ export const MarkdownView = memo(function MarkdownView({
         idPrefix,
         navigateId,
         navigateAnchor,
+        renderHeadingActions,
       });
     },
-    [text, baseRelative, defsText, resolveImage, onOpenRelative, onExternalLink, idPrefix, navigateId, navigateAnchor],
+    [text, baseRelative, defsText, resolveImage, onOpenRelative, onExternalLink, idPrefix, navigateId, navigateAnchor, renderHeadingActions],
   );
   return (
     <div ref={rootRef} className={className}>

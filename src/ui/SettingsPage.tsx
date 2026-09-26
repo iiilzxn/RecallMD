@@ -10,6 +10,20 @@ import type { DbBackupEntryDto, FullBackupResultDto } from "../index/ipc";
 import type { ReviewService } from "../review/service";
 import { getThemePref, setThemePref, type ThemePref } from "./theme";
 import { ParticipationManager } from "./ParticipationManager";
+import { JevSettings } from "./JevSettings";
+import { SpeechSettings } from "./SpeechSettings";
+import { Icon, type IconName } from "./Icon";
+
+const SETTINGS_SECTIONS: readonly { id: string; label: string; icon: IconName }[] = [
+  { id: "appearance", label: "外观", icon: "sun" },
+  { id: "workspace", label: "知识库", icon: "folder" },
+  { id: "review", label: "学习偏好", icon: "review" },
+  { id: "jev", label: "Jev 打分", icon: "spark" },
+  { id: "speech", label: "语音输入", icon: "mic" },
+  { id: "participation", label: "复习内容", icon: "list" },
+  { id: "backup", label: "备份与恢复", icon: "shield" },
+  { id: "guide", label: "新手引导", icon: "book" },
+];
 
 function tzDisplay(): string {
   const opts = Intl.DateTimeFormat().resolvedOptions();
@@ -25,12 +39,18 @@ export function SettingsPage({
   onAutosaveChanged,
   onParticipationChanged,
   section = "general",
+  onOpenGuide,
+  onStartTour,
+  onResumeTour,
 }: {
   service: ReviewService;
   workspaceRoot: string;
   onAutosaveChanged: (enabled: boolean) => void;
   onParticipationChanged: () => void;
-  section?: "general" | "participation";
+  section?: "general" | "participation" | "speech";
+  onOpenGuide?: () => void;
+  onStartTour?: () => void;
+  onResumeTour?: () => void;
 }) {
   const [dailyLimit, setDailyLimit] = useState<number | null>(null);
   const [savedLimit, setSavedLimit] = useState<number | null>(null);
@@ -43,11 +63,18 @@ export function SettingsPage({
   const [error, setError] = useState<HostErrorShape | null>(null);
   const managerRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
+  const [activeSection, setActiveSection] = useState(section === "general" ? "appearance" : section);
 
   useEffect(() => {
-    const target = section === "participation" ? managerRef.current : pageRef.current;
-    target?.scrollIntoView({ block: "start" });
-    if (section === "participation") managerRef.current?.focus({ preventScroll: true });
+    setActiveSection(section === "general" ? "appearance" : section);
+    if (section === "participation") {
+      managerRef.current?.scrollIntoView({ block: "start" });
+      managerRef.current?.focus({ preventScroll: true });
+    } else if (section === "speech") {
+      pageRef.current?.querySelector('[data-setting-section="speech"]')?.scrollIntoView({ block: "start" });
+    } else {
+      pageRef.current?.closest(".page-mount")?.scrollTo({ top: 0 });
+    }
   }, [section]);
 
   const flash = useCallback((msg: string) => {
@@ -172,18 +199,27 @@ export function SettingsPage({
     <div className="settings-page" ref={pageRef}>
       <header className="page-header">
         <div>
-          <span className="eyebrow">你的工作空间</span>
+          <span className="eyebrow">属于你的工作空间</span>
           <h2>设置</h2>
-          <p className="page-description">调整阅读偏好，管理知识库与备份。</p>
+          <p className="page-description">外观、学习节奏与数据管理。</p>
         </div>
       </header>
       {message && <div className="review-toast" role="status">{message}</div>}
       {error && <div className="review-error" role="alert">{error.message}</div>}
 
-      <section className="stats-section">
-        <h3>外观 <span className="setting-behavior">更改后立即生效</span></h3>
-        <div className="settings-row" role="radiogroup" aria-label="主题">
-          <span className="settings-row-label">主题</span>
+      <div className="settings-layout">
+      <nav className="settings-navigation" aria-label="设置分类">
+        {SETTINGS_SECTIONS.map((item) => <button type="button" key={item.id} className={activeSection === item.id ? "selected" : ""}
+          aria-current={activeSection === item.id ? "location" : undefined} onClick={() => {
+            setActiveSection(item.id);
+            pageRef.current?.querySelector(`[data-setting-section="${item.id}"]`)?.scrollIntoView({ block: "start", behavior: "instant" });
+          }}><Icon name={item.icon} size={16} />{item.label}</button>)}
+      </nav>
+      <div className="settings-content">
+      <section className="stats-section" data-setting-section="appearance">
+        <div className="section-heading"><h3><Icon name="sun" size={18} />外观</h3><span className="setting-behavior">立即生效</span></div>
+        <p className="hint">选择适合此刻光线的界面。</p>
+        <div className="settings-row theme-choices" role="radiogroup" aria-label="主题">
           {(
             [
               ["auto", "跟随系统"],
@@ -192,6 +228,9 @@ export function SettingsPage({
             ] as const
           ).map(([value, label]) => (
             <label key={value} className="theme-option">
+              <span className="theme-preview" data-theme={value} aria-hidden="true"><i /><span><b /><b /><b /><em /></span></span>
+              <span className="theme-option-label">
+              <span>{label}</span>
               <input
                 type="radio"
                 name="theme"
@@ -199,15 +238,15 @@ export function SettingsPage({
                 checked={themePref === value}
                 onChange={() => changeTheme(value)}
               />
-              {label}
+              </span>
             </label>
           ))}
         </div>
         <p className="hint">跟随系统时随 Windows 深浅色设置自动切换；编辑器、预览（含图表与代码高亮）同步换肤。</p>
       </section>
 
-      <section className="stats-section">
-        <h3>知识库</h3>
+      <section className="stats-section" data-setting-section="workspace">
+        <h3><Icon name="folder" size={18} />知识库</h3>
         <dl className="settings-kv">
           <dt>知识库路径</dt>
           <dd>{workspaceRoot}</dd>
@@ -216,8 +255,8 @@ export function SettingsPage({
         </dl>
       </section>
 
-      <section className="stats-section">
-        <h3>复习</h3>
+      <section className="stats-section" data-setting-section="review">
+        <h3><Icon name="review" size={18} />学习偏好</h3>
         <div className="settings-row">
           <label htmlFor="daily-limit">每天学习的新内容上限</label>
           <input
@@ -251,12 +290,16 @@ export function SettingsPage({
         <p className="hint">关闭后请使用 Ctrl+S 手动保存；恢复草稿仍会保留。</p>
       </section>
 
-      <div ref={managerRef} tabIndex={-1} className="manager-anchor">
+      <JevSettings />
+      <SpeechSettings />
+
+      <div ref={managerRef} tabIndex={-1} className="manager-anchor" data-setting-section="participation">
         <ParticipationManager service={service} onChanged={onParticipationChanged} />
       </div>
 
-      <section className="stats-section">
-        <h3>备份与恢复</h3>
+      <section className="stats-section" data-setting-section="backup">
+        <h3><Icon name="shield" size={18} />备份与恢复</h3>
+        <p className="hint">为笔记和学习记录留一份备份。</p>
         <div className="settings-row">
           <button type="button" className="btn primary" disabled={busy === "backup"} onClick={() => void backupNow()}>
             立即备份数据库
@@ -300,6 +343,15 @@ export function SettingsPage({
         {backups != null && backups.length === 0 && <p className="stats-empty">尚无每日备份（每天首次打开自动创建）。</p>}
       </section>
 
+      <section className="stats-section" data-setting-section="guide">
+        <div className="section-heading"><h3><Icon name="book" size={18} />新手引导</h3><span className="setting-behavior">随时重新开始</span></div>
+        <p className="hint">用四页图解认识 RecallMD，或跟着真实界面走一遍记录、学习与复习。引导进度保存在当前设备。</p>
+        <div className="settings-guide-actions">
+          {onOpenGuide && <button type="button" className="btn" onClick={onOpenGuide}>查看概念图解</button>}
+          {onStartTour && <button type="button" className="btn" onClick={onStartTour}>重新开始操作引导</button>}
+          {onResumeTour && <button type="button" className="btn primary" onClick={onResumeTour}>继续上次引导</button>}
+        </div>
+      </section>
       <details className="stats-section technical-details">
         <summary>诊断与版本 · 技术详情</summary>
         <dl className="settings-kv">
@@ -311,6 +363,8 @@ export function SettingsPage({
           <dd>request_retention 0.90 · maximum_interval 3650 天 · 短期学习 1m/10m · 重学 10m</dd>
         </dl>
       </details>
+      </div>
+      </div>
     </div>
   );
 }

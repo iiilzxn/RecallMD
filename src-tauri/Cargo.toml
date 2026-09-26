@@ -1,6 +1,6 @@
 [package]
 name = "recallmd"
-version = "0.2.1"
+version = "0.3.0"
 description = "RecallMD — 本地 Markdown 编辑器与主动回忆复习"
 edition = "2021"
 rust-version = "1.98.1"
@@ -18,13 +18,16 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["protocol-asset"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-windows = { version = "0.62.2", features = ["Win32_Storage_FileSystem", "Win32_Foundation", "Win32_System_IO", "Win32_System_WindowsProgramming", "Win32_System_SystemInformation", "Win32_Security"] }
+windows = { version = "0.62.2", features = ["Win32_Storage_FileSystem", "Win32_Foundation", "Win32_System_IO", "Win32_System_WindowsProgramming", "Win32_System_SystemInformation", "Win32_Security", "Win32_Security_Credentials"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "native-tls", "system-proxy"] }
 tauri-plugin-dialog = "2.7.3"
 sha2 = "0.11.0"
 uuid = { version = "1.26.0", features = ["v4"] }
 # M4：SQLite 元数据存储（bundled 引擎 3.53.2，M0 验证 Backup API；设计 §6.2/§12.1）
 rusqlite = { version = "0.40.2", features = ["bundled", "backup"] }
 notify = "8"
+sherpa-onnx = { version = "=1.13.8", default-features = false, features = ["shared"] }
+cpal = "0.18.2"
 
 [profile.release]
 codegen-units = 1

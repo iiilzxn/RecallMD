@@ -220,6 +220,8 @@ pub struct TokenBinding {
     pub index_revision: i64,
     pub state_revision: i64,
     pub issued_at: i64,
+    /// 显式学习会话允许从未评分的新题在首次到期前提交。
+    pub learn_now: bool,
 }
 
 /// 进程内令牌表（§10.4）：成功提交或快照过期后移除；容量上限逐出最旧。
@@ -655,14 +657,82 @@ fn insert_history(
 // review_begin：签发令牌（§10.4）
 // ---------------------------------------------------------------------------
 
+/// 只在提交答案后调用；沿用复习令牌的快照约束，避免用已变更的标准打分。
+fn current_token_context(conn: &Connection, tokens: &ReviewTokens, token: &str) -> HostResult<(TokenBinding, BlockCtx)> {
+    let binding = tokens.peek(token).ok_or_else(|| HostError::new(
+        super::super::error::REVIEW_TOKEN_INVALID, "复习会话已结束，请重新取题",
+    ))?;
+    let stale = || HostError::new(super::super::error::REVIEW_TOKEN_STALE, "题目或得分点已变更，请重新取题后作答");
+    let (row, ctx) = require_rateable(conn, &binding.block_id).map_err(|_| stale())?;
+    if row.state_revision != binding.state_revision
+        || ctx.content_version != binding.content_version
+        || ctx.body_hash != binding.body_hash
+        || ctx.document_hash.as_deref() != Some(binding.document_hash.as_str())
+        || ctx.index_revision != binding.index_revision {
+        return Err(stale());
+    }
+    Ok((binding.clone(), ctx))
+}
+
+pub fn save_rubric_for_review_on(conn: &mut Connection, tokens: &mut ReviewTokens, token: &str, points: &[String]) -> HostResult<ReviewBeginResult> {
+    let (binding, _) = current_token_context(conn, tokens, token)?;
+    // 所有可能失败的会话前置条件（包括日配额）在写入前核验。
+    let mut next = begin_on(conn, tokens, &binding.block_id, binding.learn_now)?;
+    if let Err(error) = super::rubric::save_on(conn, &binding.block_id, points) {
+        tokens.remove(&next.token);
+        return Err(error);
+    }
+    // 同一 DB 工作线程任务内，save_on 仅推进一次 state_revision。
+    next.state.state_revision += 1;
+    tokens.entries.get_mut(&next.token).expect("刚签发的令牌").state_revision = next.state.state_revision;
+    Ok(next)
+}
+
+pub fn jev_grade_context_on(conn: &Connection, tokens: &ReviewTokens, token: &str) -> HostResult<crate::jev::GradeContext> {
+    let (binding, ctx) = current_token_context(conn, tokens, token)?;
+    let prompt: Option<String> = conn.query_row("SELECT recall_prompt FROM KnowledgeBlock WHERE block_id = ?1", [&binding.block_id], |r| r.get(0))
+        .map_err(|e| db_err(e, "读取评分题目"))?;
+    let rubric = super::rubric::read_on(conn, &binding.block_id)?;
+    if rubric.points.is_empty() {
+        return Err(HostError::new("JEV_RUBRIC_MISSING", "本题尚未设置得分点，请在笔记预览中点击对应小节标题旁的「＋」添加"));
+    }
+    Ok(crate::jev::GradeContext { prompt: prompt.or(ctx.title).unwrap_or_default(), points: rubric.points })
+}
+
 pub fn review_begin_on(
     conn: &Connection,
     tokens: &mut ReviewTokens,
     block_id: &str,
 ) -> HostResult<ReviewBeginResult> {
+    begin_on(conn, tokens, block_id, false)
+}
+
+pub fn learning_begin_on(
+    conn: &Connection,
+    tokens: &mut ReviewTokens,
+    block_id: &str,
+) -> HostResult<ReviewBeginResult> {
+    begin_on(conn, tokens, block_id, true)
+}
+
+fn begin_on(
+    conn: &Connection,
+    tokens: &mut ReviewTokens,
+    block_id: &str,
+    learn_now: bool,
+) -> HostResult<ReviewBeginResult> {
     let now = now_ms();
     let (row, ctx) = require_rateable(conn, block_id)?;
-    if row.next_review_at() > now {
+    if learn_now && (row.phase != "NEW" || row.first_review_at.is_some()) {
+        return Err(rejected("立即学习仅适用于尚未首次评分的新内容"));
+    }
+    if learn_now && quota_info(conn, now)?.remaining <= 0 {
+        return Err(HostError::new(
+            super::super::error::QUOTA_EXCEEDED,
+            "今日新内容名额已用完",
+        ));
+    }
+    if !learn_now && row.next_review_at() > now {
         return Err(rejected(format!(
             "尚未到期（next_review_at={} > now={}）",
             row.next_review_at(),
@@ -681,6 +751,7 @@ pub fn review_begin_on(
         index_revision: ctx.index_revision,
         state_revision: row.state_revision,
         issued_at: now,
+        learn_now,
     });
     let next_at = row.next_review_at();
     Ok(ReviewBeginResult {
@@ -817,7 +888,9 @@ pub fn submit_review_on(
     }
 
     // ---- 4. 到期复核（§10.2 L396）----
-    if row.next_review_at() > req.now_ms {
+    if row.next_review_at() > req.now_ms
+        && !(binding.learn_now && row.phase == "NEW" && row.first_review_at.is_none())
+    {
         return Err(rejected("尚未到期，不可评分"));
     }
 
@@ -1345,6 +1418,31 @@ pub fn review_queue_on(conn: &Connection, page_size: Option<i64>) -> HostResult<
         counts,
         quota,
         next_upcoming_at,
+    })
+}
+
+/// 新题可以主动开始学习；仅列队、取题不修改调度状态。
+pub fn learning_queue_on(conn: &Connection, page_size: Option<i64>) -> HostResult<ReviewQueueResult> {
+    let now = now_ms();
+    let page = page_size.unwrap_or(50).clamp(1, 200);
+    let quota = quota_info(conn, now)?;
+    let items = query_group(conn, i64::MAX, "'NEW'", Some(true), quota.remaining.min(page))?;
+    let sql = format!(
+        "SELECT COUNT(*) FROM ({QUEUE_SQL_PREFIX} AND r.phase = 'NEW' AND r.first_review_at IS NULL)"
+    );
+    let new_total = conn
+        .query_row(&sql, [i64::MAX], |r| r.get(0))
+        .map_err(|e| db_err(e, "新内容计数"))?;
+    Ok(ReviewQueueResult {
+        now_ms: now,
+        items,
+        counts: QueueCounts {
+            learning: 0,
+            review: 0,
+            new_total,
+        },
+        quota,
+        next_upcoming_at: None,
     })
 }
 

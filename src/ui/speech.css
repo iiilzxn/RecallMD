@@ -1,0 +1,39 @@
+.speech-model-card { display: block; border: 1px solid var(--border); background: var(--surface); border-radius: 11px; padding: 18px; margin: 19px 0; }
+.speech-model-card > div { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.speech-model-card strong { font-size: 13px; line-height: 1.6; }
+.speech-model-badge { padding: 3px 8px; border-radius: 6px; background: var(--accent-softer); color: var(--accent); font-size: 10px; }
+.speech-model-card p { margin: 9px 0; color: var(--text-2); font-size: 11px; line-height: 1.8; }
+.speech-model-card > span { font-size: 10px; color: var(--accent); }
+.speech-model-card small { display: block; margin-top: 8px; color: var(--text-3); font-size: 10px; overflow-wrap: anywhere; line-height: 1.7; }
+.speech-model-name { color: var(--text-2); font-size: 11px; }
+.speech-folder { padding: 13px 15px; border-radius: 8px; background: var(--surface-sunken); margin-bottom: 18px; }
+.speech-folder > span { display: block; font-size: 11px; color: var(--text-3); }
+.speech-folder code { display: block; font-size: 11px; overflow-wrap: anywhere; margin: 8px 0 10px; }
+.speech-folder > div { display: flex; gap: 15px; align-items: center; }
+.speech-device-row select { max-width: min(420px, 100%); min-width: 0; }
+.speech-device-row select { padding: 9px 11px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: 12px var(--font-ui); }
+.speech-input { margin: 12px 0 17px; border: 1px solid var(--border); border-radius: 10px; padding: 13px 15px; background: var(--surface-sunken); }
+.speech-input.is-active { border-color: var(--accent-border); background: var(--accent-softer); }
+.speech-input-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.speech-input-controls .btn { font-size: 11px; gap: 7px; }
+.speech-input-controls .text-button { font-size: 11px; }
+.speech-input kbd { margin-left: 2px; font-size: 9px; opacity: .8; }
+.speech-input p.hint { margin: 9px 0 0; font-size: 10px; line-height: 1.8; }
+.speech-recording-state { display: flex; align-items: center; gap: 9px; margin-top: 12px; color: var(--text-2); font-size: 11px; flex-wrap: wrap; }
+.speech-recording-state > i { height: 7px; width: 7px; border-radius: 50%; background: #d36a5d; }
+.speech-recording-state > span { font-variant-numeric: tabular-nums; }
+.speech-recording-state meter { width: 85px; height: 11px; accent-color: var(--accent); }
+.speech-recording-state small { color: var(--text-3); font-size: 10px; }
+.speech-trial { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 17px; }
+.speech-trial > .hint { margin-top: 12px; }
+.speech-history { display: grid; gap: 10px; margin: 14px 0; }
+.speech-history article, .speech-answer-snapshot { border: 1px solid var(--border); border-radius: 9px; padding: 14px 16px; background: var(--surface); }
+.speech-history article > div { display: flex; gap: 8px; justify-content: space-between; flex-wrap: wrap; }
+.speech-history strong { font-size: 11px; }
+.speech-history span { font-size: 10px; color: var(--text-3); }
+.speech-history p, .speech-answer-snapshot p { margin: 9px 0 0; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.85; }
+.speech-answer-snapshot { margin: 15px 0; background: var(--accent-softer); }
+.speech-answer-snapshot strong { font-size: 12px; color: var(--accent); }
+@media (max-width: 640px) {
+  .speech-input { padding: 12px; }
+}

@@ -70,10 +70,25 @@ export default function MermaidBlock({ code }: { code: string }) {
     Promise.all([loadMermaid(), loadDompurify()])
       .then(([mermaid, DOMPurify]) => {
         if (cancelled || seq !== seqRef.current) return;
+        const styles = getComputedStyle(document.documentElement);
+        const color = (name: string) => styles.getPropertyValue(name).trim();
         mermaid.initialize({
           startOnLoad: false,
           securityLevel: "strict",
-          theme: theme === "dark" ? "dark" : "default",
+          theme: "base",
+          themeVariables: {
+            darkMode: theme === "dark",
+            background: color("--surface-sunken"),
+            primaryColor: color("--accent-softer"),
+            primaryTextColor: color("--text"),
+            primaryBorderColor: color("--accent-border"),
+            secondaryColor: color("--surface"),
+            tertiaryColor: color("--surface-sunken"),
+            lineColor: color("--text-3"),
+            textColor: color("--text"),
+            fontFamily: color("--font-ui"),
+            fontSize: "15px",
+          },
         });
         return mermaid
           .render(`rmd-mmd-${++renderSeq}`, code)

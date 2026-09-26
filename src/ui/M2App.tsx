@@ -3,7 +3,8 @@
 // M3：Block Engine 接线——保存流锚点插入桥、纳入复习动作、状态栏块计数、
 // 500ms 防抖的已保存版本分析（§15.2）。
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import brandIcon from "../assets/recallmd-v2.png";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -17,7 +18,8 @@ import { reviewService } from "../review/runtime";
 import { ReviewPage } from "./ReviewPage";
 import { StatsPage } from "./StatsPage";
 import { SettingsPage } from "./SettingsPage";
-import { MarkdownView, extractHeadings } from "./MarkdownView";
+import { extractHeadings } from "./MarkdownView";
+import { NoteMarkdownView } from "./NoteMarkdownView";
 import { applyTheme, watchSystemTheme } from "./theme";
 import { SaveCoordinator, type CoordinatorState } from "../editor/SaveCoordinator";
 import { EditorController, type CursorInfo, type SystemEdit } from "../editor/EditorController";
@@ -34,6 +36,8 @@ import {
 import { DirPickerTree, SidebarTree } from "./Tree";
 import { Icon } from "./Icon";
 import { Modal } from "./Modal";
+import { EXAMPLE_NOTE, Onboarding, useOnboarding } from "./onboarding/Onboarding";
+import type { GuideReviewState } from "./onboarding/state";
 
 type EolState = "LF" | "CRLF" | "MIXED";
 type OpenBanner = { kind: "readonly" | "error"; message: string } | null;
@@ -112,39 +116,9 @@ function MissingIdRow({
 /** 状态栏的引擎扫描摘要（§15.2：仅对已保存版本分析）。 */
 type EngineUi = { blocks: number; anchored: number; conflicts: number };
 
-/** 品牌标识（M8 视觉）：层叠记忆标记，渐变 id 每实例唯一 */
+/** Match the desktop icon: an open book with a returning, folded page. */
 function LogoMark({ size = 22 }: { size?: number }) {
-  const gid = useId();
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" className="logo-mark">
-      <rect x="1.5" y="1.5" width="21" height="21" rx="6" fill={`url(#${gid})`} />
-      <path d="M12 6.2 6.9 9.1l5.1 2.9 5.1-2.9z" fill="#fff" />
-      <path
-        d="M6.9 12.4 12 15.3l5.1-2.9"
-        stroke="#fff"
-        strokeWidth="1.7"
-        fill="none"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        opacity=".75"
-      />
-      <path
-        d="M6.9 15.8 12 18.7l5.1-2.9"
-        stroke="#fff"
-        strokeWidth="1.7"
-        fill="none"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        opacity=".45"
-      />
-      <defs>
-        <linearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#16948a" />
-          <stop offset="1" stopColor="#0b5d57" />
-        </linearGradient>
-      </defs>
-    </svg>
-  );
+  return <img src={brandIcon} width={size} height={size} alt="" aria-hidden="true" className="logo-mark" draggable={false} />;
 }
 
 /** 预览开关（§207 可切换只读预览）：眼睛开/闭两态 */
@@ -176,6 +150,8 @@ function EyeToggleIcon({ off }: { off: boolean }) {
 }
 
 export function M2App() {
+  const guide = useOnboarding();
+  const [guideReview, setGuideReview] = useState<GuideReviewState | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<EditorController | null>(null);
   const coordRef = useRef<SaveCoordinator | null>(null);
@@ -199,6 +175,7 @@ export function M2App() {
   const [autosaveEnabled, setAutosaveEnabled] = useState(true);
   const [cursor, setCursor] = useState<CursorInfo>({ line: 1, col: 1, lines: 1, chars: 0 });
   const [fileInfo, setFileInfo] = useState<{ root: string; relative: string } | null>(null);
+  const fileLoadRequestRef = useRef(0);
   const [eolState, setEolState] = useState<EolState>("LF");
   const [hasBom, setHasBom] = useState(false);
   const [banner, setBanner] = useState<OpenBanner>(null);
@@ -375,6 +352,7 @@ export function M2App() {
       if (s.status === "conflict") setConflictOpen(true);
     });
     return () => {
+      fileLoadRequestRef.current += 1;
       unsub();
       if (scanTimerRef.current) window.clearTimeout(scanTimerRef.current);
       if (tocTimerRef.current) window.clearTimeout(tocTimerRef.current);
@@ -389,7 +367,10 @@ export function M2App() {
 
   // --- M6：页面视图与到期角标 ---
   const [view, setView] = useState<"editor" | "review" | "stats" | "settings">("editor");
-  const [settingsSection, setSettingsSection] = useState<"general" | "participation">("general");
+  const [learnNow, setLearnNow] = useState(false);
+  const pageMountRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => { pageMountRef.current?.scrollTo({ top: 0 }); }, [view, learnNow]);
+  const [settingsSection, setSettingsSection] = useState<"general" | "participation" | "speech">("general");
   const openReviewManagement = useCallback(() => {
     setSettingsSection("participation");
     setView("settings");
@@ -413,6 +394,10 @@ export function M2App() {
   /** §1014 大文件阈值：≥5 MiB / 5 万行禁用预览（cursor 由编辑器增量上报） */
   const previewOversized = cursor.chars > 5_000_000 || cursor.lines > 50_000;
   const canPreview = fileInfo !== null && banner === null && !previewOversized;
+  const showPreview = previewMode && canPreview;
+  useEffect(() => {
+    if (previewMode && !canPreview) setPreviewMode(false);
+  }, [previewMode, canPreview]);
 
   useEffect(() => {
     if (view === "editor" && fileInfo && !previewMode && !document.querySelector("dialog[open]")) {
@@ -438,9 +423,9 @@ export function M2App() {
     if (view !== "editor") return;
     const h = (e: KeyboardEvent) => {
       if (document.querySelector("dialog[open]")) return;
-      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "e" || e.isComposing) return;
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "e" || e.isComposing || e.altKey || e.shiftKey || e.repeat) return;
       const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (t && !t.closest(".editor-shell") && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
       e.preventDefault();
       togglePreviewRef.current();
     };
@@ -632,6 +617,7 @@ export function M2App() {
   // --- 打开 workspace ---
   const applyOpenWorkspace = useCallback(
     async (root: string) => {
+      fileLoadRequestRef.current += 1;
       setWsError(null);
       try {
         const info = await workspaceIpc.open(root);
@@ -665,6 +651,7 @@ export function M2App() {
     (relative: string) => {
       const coord = coordRef.current;
       if (!coord || !wsInfo) return;
+      fileLoadRequestRef.current += 1;
       if (fileInfo?.relative === relative) {
         setView("editor");
         editorRef.current?.focus();
@@ -687,24 +674,43 @@ export function M2App() {
       const coord = coordRef.current;
       const editor = editorRef.current;
       if (!coord || !editor || !wsInfo) return;
+      const request = ++fileLoadRequestRef.current;
+      const isCurrent = () => request === fileLoadRequestRef.current && coordRef.current === coord;
       setView("editor");
       try {
         const rd = await ipc.readDocument(relative);
+        if (!isCurrent()) return;
+        // 读取期间旧文档仍可编辑；真正替换前再次检查，不能覆盖刚输入的内容。
+        if (coord.openFile && (coord.isDirty() || coord.getState().status === "conflict" || coord.getState().status === "saving")) {
+          pendingActionRef.current = { kind: "open-file", relative };
+          setSwitchGuard(true);
+          return;
+        }
         setBanner(null);
         setEolState(rd.lineEnding);
         setHasBom(rd.hasBom);
         await coord.open(wsInfo.root, relative, rd);
+        if (!isCurrent()) return;
         editor.replaceDoc(rd.text);
         editor.focus();
         setFileInfo({ root: wsInfo.root, relative });
         setEngineUi(null);
-        setView("editor");
-        const draft = await ipc.draftRead(relative);
-        if (draft.exists && draft.text != null && draft.text !== rd.text) {
-          setDraftPrompt(draft);
+        setDraftPrompt(null);
+        try {
+          const draft = await ipc.draftRead(relative);
+          if (!isCurrent()) return;
+          if (draft.exists && draft.text != null && draft.text !== rd.text) setDraftPrompt(draft);
+        } catch (e) {
+          if (isCurrent()) showToast(`笔记已打开，但恢复草稿读取失败：${(e as HostErrorShape).message}`);
         }
       } catch (e) {
+        if (!isCurrent()) return;
         const err = e as HostErrorShape;
+        if (coord.openFile) {
+          showToast(`无法打开 ${relative}：${err.message}。当前笔记和修改已保留。`);
+          void refreshTree();
+          return;
+        }
         setBanner({
           kind:
             err.code === "FILE_TOO_LARGE" || err.code === "UNSUPPORTED_ENCODING"
@@ -713,11 +719,12 @@ export function M2App() {
           message: `${err.message}（${err.code}）`,
         });
         coord.close();
+        editor.replaceDoc("");
         setFileInfo(null);
         void refreshTree();
       }
     },
-    [wsInfo, refreshTree],
+    [wsInfo, refreshTree, showToast],
   );
   const loadFileRef = useRef(loadFile);
   loadFileRef.current = loadFile;
@@ -760,7 +767,9 @@ export function M2App() {
 
   // --- 切库 / 关窗 ---
   const closeToStart = useCallback(async () => {
+    fileLoadRequestRef.current += 1;
     coordRef.current?.close();
+    editorRef.current?.replaceDoc("");
     setFileInfo(null);
     setBanner(null);
     setDraftPrompt(null);
@@ -1400,19 +1409,61 @@ export function M2App() {
         <div className="sidebar-head">
           <span className="brand">
             <LogoMark />
-            RecallMD
+            <span>RecallMD<small>记录 · 回忆 · 生长</small></span>
           </span>
         </div>
         <div className="workspace-label" title={wsInfo?.root}>
           <Icon name="folder" />
           <span className="m2-ws-name">{wsInfo ? wsInfo.root.split(/[\\/]/).pop() : "知识库"}</span>
-          <span className="workspace-kind">本地知识库</span>
+          <span className="workspace-kind">本地</span>
           <button className="tree-act workspace-switch" title="切换知识库" aria-label="切换知识库" onClick={requestSwitchWorkspace}>
             <Icon name="switch" />
           </button>
         </div>
+        {wsInfo && (
+          <nav className="sidebar-nav" aria-label="主要导航">
+            <button type="button" data-guide="notes" className={`nav-row${view === "editor" ? " active" : ""}`} aria-current={view === "editor" ? "page" : undefined} onClick={() => setView("editor")}>
+              <Icon name="book" /><span className="nav-label">笔记</span>
+            </button>
+            <button
+              type="button"
+              className={`nav-row${view === "review" && !learnNow ? " active" : ""}`}
+              data-guide="review-nav"
+              aria-current={view === "review" && !learnNow ? "page" : undefined}
+              onClick={() => {
+                setLearnNow(false);
+                setView("review");
+                refreshDue();
+              }}
+            >
+              <Icon name="review" /><span className="nav-label">今日复习</span>
+              {dueBadge && dueBadge.count > 0 && (
+                <span className="nav-badge">{dueBadge.count}</span>
+              )}
+            </button>
+            <button type="button" data-guide="learn" className={`nav-row${view === "review" && learnNow ? " active" : ""}`} aria-current={view === "review" && learnNow ? "page" : undefined} onClick={() => { setLearnNow(true); setView("review"); }}>
+              <Icon name="spark" /><span className="nav-label">学习新内容</span>
+            </button>
+            <button
+              type="button"
+              className={`nav-row${view === "stats" ? " active" : ""}`}
+              aria-current={view === "stats" ? "page" : undefined}
+              onClick={() => setView("stats")}
+            >
+              <Icon name="stats" /><span className="nav-label">统计</span>
+            </button>
+            <button
+              type="button"
+              className={`nav-row${view === "settings" ? " active" : ""}`}
+              aria-current={view === "settings" ? "page" : undefined}
+              onClick={() => { setSettingsSection("general"); setView("settings"); }}
+            >
+              <Icon name="settings" /><span className="nav-label">设置</span>
+            </button>
+          </nav>
+        )}
         <div className="sidebar-tools">
-          <button onClick={() => openNamePrompt({ mode: "new-file", dir: selectedDir })}>
+          <button data-guide="new-file" onClick={() => openNamePrompt({ mode: "new-file", dir: selectedDir })}>
             <Icon name="plus" size={15} />新建文件
           </button>
           <button onClick={() => openNamePrompt({ mode: "new-dir", dir: selectedDir })}>
@@ -1439,7 +1490,7 @@ export function M2App() {
           )}
         </div>
         <div className="sidebar-section-label">
-          <span>文件</span>
+          <span>我的笔记</span>
           <div className="sidebar-file-tools">
             <button className="tree-act" title="刷新文件列表" aria-label="刷新文件列表" onClick={() => void refreshTree()}><Icon name="refresh" size={14} /></button>
             <button className="tree-act" title="回收站" aria-label="回收站" onClick={() => void openTrash()}><Icon name="trash" size={14} /></button>
@@ -1478,77 +1529,52 @@ export function M2App() {
             />
           )}
         </div>
-        {wsInfo && (
-          <nav className="sidebar-nav" aria-label="主要导航">
-            <button type="button" className={`nav-row${view === "editor" ? " active" : ""}`} aria-current={view === "editor" ? "page" : undefined} onClick={() => setView("editor")}>
-              <Icon name="file" /><span className="nav-label">笔记</span>
-            </button>
-            <button
-              type="button"
-              className={`nav-row${view === "review" ? " active" : ""}`}
-              aria-current={view === "review" ? "page" : undefined}
-              onClick={() => {
-                setView("review");
-                refreshDue();
-              }}
-            >
-              <Icon name="review" /><span className="nav-label">今日待复习</span>
-              {dueBadge && dueBadge.count > 0 && (
-                <span className="nav-badge">{dueBadge.count}</span>
-              )}
-            </button>
-            <button
-              type="button"
-              className={`nav-row${view === "stats" ? " active" : ""}`}
-              aria-current={view === "stats" ? "page" : undefined}
-              onClick={() => setView("stats")}
-            >
-              <Icon name="stats" /><span className="nav-label">统计</span>
-            </button>
-            <button
-              type="button"
-              className={`nav-row${view === "settings" ? " active" : ""}`}
-              aria-current={view === "settings" ? "page" : undefined}
-              onClick={() => { setSettingsSection("general"); setView("settings"); }}
-            >
-              <Icon name="settings" /><span className="nav-label">设置</span>
-            </button>
-          </nav>
-        )}
+        <div className="sidebar-footer">
+          <button type="button" className="text-button guide-entry" onClick={guide.openIntro}><Icon name="book" size={15} />新手引导</button>
+          <button type="button" className="tree-act" title="打开设置" aria-label="打开设置" onClick={() => { setSettingsSection("general"); setView("settings"); }}><Icon name="sun" size={16} /></button>
+        </div>
       </aside>
 
       <div className="main-col" inert={!wsInfo}>
         {view === "editor" && (
           <header className="topbar">
-            <Icon name="file" />
-            <span className="file-path" title={fileInfo ? `${fileInfo.root}\\${fileInfo.relative}` : ""}>
-              {fileInfo ? fileInfo.relative : "未打开文件"}
-            </span>
+            <span className="document-icon"><Icon name="file" size={19} /></span>
+            <div className="file-identity">
+              <span className="file-path" title={fileInfo ? `${fileInfo.root}\\${fileInfo.relative}` : ""}>
+                {fileInfo ? fileInfo.relative.split("/").pop()?.replace(/\.md$/i, "") : "我的笔记"}
+              </span>
+              <span className="file-location">{fileInfo ? parentOf(fileInfo.relative) || "知识库根目录" : "选择一篇笔记，开始记录"}</span>
+            </div>
             <span className="spacer" />
             <div className="editor-toolbar">
+              <div className="editor-view-switch" role="group" aria-label="文档视图">
+              <button type="button" disabled={!fileInfo} className={!showPreview ? "selected" : ""} aria-pressed={!showPreview}
+                title="编辑 Markdown (Ctrl+E)" onClick={() => { if (previewMode) togglePreview(); }}><Icon name="edit" size={14} />编辑</button>
               <button
-                className={`preview-toggle${previewMode ? " active" : ""}`}
+                className={`preview-toggle${showPreview ? " active" : ""}`}
                 disabled={!canPreview}
-                aria-pressed={previewMode}
+                aria-pressed={showPreview}
                 title={
                   previewOversized
                     ? "大文件（≥5 MiB 或 5 万行）预览不可用"
-                    : previewMode
-                      ? "返回编辑 (Ctrl+E)"
-                      : "Markdown 预览 (Ctrl+E)"
+                    : "Markdown 预览 (Ctrl+E)"
                 }
-                onClick={togglePreview}
+                onClick={() => { if (!previewMode) togglePreview(); }}
+                aria-label="阅读预览"
+                data-guide="preview"
               >
-                <EyeToggleIcon off={!previewMode} />
-                <span>{previewMode ? "返回编辑" : "预览"}</span>
+                <EyeToggleIcon off={false} />
+                <span>阅读</span>
               </button>
+              </div>
               <button
                 className={engineUi?.anchored ? "" : "primary"}
                 disabled={!fileInfo || engineDead || status === "conflict"}
                 title="将当前笔记纳入复习；会在正文中添加复习标记并保存"
+                data-guide="include"
                 onClick={() => void handleInclude()}
               >
-                <Icon name="review" size={16} />纳入复习
+                <Icon name="review" size={16} /><span>纳入复习</span>
               </button>
               <button
                 className={status === "dirty" && !autosaveEnabled ? "primary" : ""}
@@ -1556,15 +1582,15 @@ export function M2App() {
                 title="保存 (Ctrl+S)"
                 onClick={() => void handleSave()}
               >
-                <Icon name="save" size={16} />保存 <kbd>Ctrl S</kbd>
+                <Icon name="save" size={16} /><span>保存</span><kbd>Ctrl S</kbd>
               </button>
             </div>
           </header>
         )}
         {view === "editor" && fileInfo && (
           <div className="document-state">
-            <span>{autosaveEnabled ? "自动保存已开启" : "手动保存模式"}</span>
-            <span>{engineDead ? "复习内容暂时无法识别" : !engineUi ? "正在识别复习内容…" : engineUi.anchored > 0 ? `已添加 ${engineUi.anchored} 个复习标记` : "尚未添加复习标记"}</span>
+            <span><i className={`document-status-dot${autosaveEnabled ? " enabled" : ""}`} />{autosaveEnabled ? "自动保存" : "手动保存"}</span>
+            <span>{engineDead ? "复习内容暂时无法识别" : !engineUi ? "正在识别复习内容…" : engineUi.anchored > 0 ? `${engineUi.anchored} 个复习小节` : "尚未纳入复习"}</span>
             <button type="button" className="text-button" onClick={openReviewManagement}>管理复习内容</button>
           </div>
         )}
@@ -1588,14 +1614,20 @@ export function M2App() {
         )}
 
         <div className={`editor-row${view === "editor" ? "" : " is-hidden"}`}>
-          <div className={`editor-area${previewMode ? " in-preview" : ""}`}>
+          <div className={`editor-area${showPreview ? " in-preview" : ""}`}>
             <div className="editor-shell" ref={hostRef} />
-            {previewMode && canEdit && (
+            {showPreview && (
               <div className="md-preview">
                 <div className="md-preview-inner">
-                  <MarkdownView
+                  <NoteMarkdownView
+                    key={`${wsInfo?.workspaceId}:${fileInfo?.relative}`}
                     text={previewText}
                     baseRelative={fileInfo ? fileInfo.relative : ""}
+                    savedHash={coordState?.status === "clean" ? coordRef.current?.getBaseHash() ?? null : null}
+                    syncRevision={syncSummary}
+                    active={view === "editor"}
+                    onInclude={() => void handleInclude()}
+                    onPointSaved={() => guide.advance("points")}
                     resolveImage={resolveImage}
                     onOpenRelative={(rel) => {
                       if (rel) openFile(rel);
@@ -1611,12 +1643,14 @@ export function M2App() {
             )}
             {wsInfo && fileInfo === null && !banner && view === "editor" && (
               <div className="welcome">
-                <div className="welcome-mark"><Icon name="file" size={30} /></div>
-                <h2>从左侧选择一个文件开始</h2>
+                <div className="welcome-mark"><Icon name="book" size={34} /></div>
+                <span className="eyebrow">留一点空间，给新的想法</span>
+                <h2>从一篇笔记开始</h2>
                 <p>
-                  打开一篇笔记，继续整理你的想法。<br />
-                  也可以选中文件夹，再点击「新建文件」。
+                  在左侧打开已有笔记，或写下一个新的问题。<br />
+                  记录、理解，再用回忆把它留下来。
                 </p>
+                <button type="button" className="btn primary" onClick={() => openNamePrompt({ mode: "new-file", dir: selectedDir })}><Icon name="plus" size={16} />写一篇新笔记</button>
                 <div className="welcome-shortcuts"><span><kbd>Ctrl P</kbd> 查找文件</span><span><kbd>Ctrl S</kbd> 保存笔记</span></div>
               </div>
             )}
@@ -1652,13 +1686,19 @@ export function M2App() {
         </div>
 
         {view !== "editor" && (
-          <div className="page-mount">
+          <div className="page-mount" ref={pageMountRef}>
             {view === "review" && (
               <ReviewPage
+                key={learnNow ? "learning" : "review"}
+                learnNow={learnNow}
+                onSwitchMode={() => setLearnNow((value) => !value)}
                 service={reviewService()}
                 onExit={() => setView("editor")}
                 onManage={openReviewManagement}
+                onSpeechSettings={() => { setSettingsSection("speech"); setView("settings"); }}
                 onDueChanged={refreshDue}
+                onGuideStateChange={setGuideReview}
+                onRated={() => guide.advance("rate")}
                 resolveImage={resolveImage}
               />
             )}
@@ -1668,6 +1708,9 @@ export function M2App() {
                 service={reviewService()}
                 workspaceRoot={wsInfo?.root ?? ""}
                 section={settingsSection}
+                onOpenGuide={guide.openIntro}
+                onStartTour={guide.start}
+                onResumeTour={guide.state.status === "paused" || (guide.state.status === "idle" && guide.state.introSeen && guide.state.step !== "workspace") ? guide.resume : undefined}
                 onParticipationChanged={refreshDue}
                 onAutosaveChanged={(v) => { coordRef.current?.setAutosaveEnabled(v); setAutosaveEnabled(v); }}
               />
@@ -1839,19 +1882,65 @@ export function M2App() {
 
       {toast && <div className="toast" role="status">{toast}</div>}
 
+      <Onboarding
+        guide={guide}
+        context={{
+          workspace: wsInfo !== null, file: fileInfo !== null, view,
+          clean: status === "clean", enrolled: !!engineUi?.anchored && !engineUi.conflicts,
+          preview: showPreview, empty: cursor.chars === 0, canEdit, engineDead, oversized: previewOversized,
+          review: guideReview,
+        }}
+        onNewFile={() => {
+          openNamePrompt({ mode: "new-file", dir: selectedDir });
+          setNameValue("我的第一篇笔记.md");
+        }}
+        onFillExample={() => {
+          const editor = editorRef.current;
+          const coord = coordRef.current;
+          // This explicit action only fills an empty, editable buffer. Never replace existing work.
+          if (!canEdit || !editor || !coord?.openFile || editor.isComposing() || editor.getText().length > 0 || coord.getState().status !== "clean") return;
+          editor.replaceDoc(EXAMPLE_NOTE);
+          coord.notifyInput();
+          setPreviewMode(false);
+          editor.focus();
+        }}
+        onNavigate={(destination) => {
+          if (destination === "learn" || destination === "review") {
+            setLearnNow(destination === "learn");
+            setView("review");
+          } else {
+            setView(destination);
+          }
+        }}
+      />
+
       {/* 启动屏：未打开 workspace 时覆盖整个应用 */}
       {!wsInfo && (
         <div className="start-screen">
           <div className="start-card">
+            <section className="start-story">
             <div className="start-brand">
               <LogoMark size={36} />
               <h2>RecallMD</h2>
             </div>
             <div className="start-intro">
-              <span className="eyebrow">你的本地知识库</span>
-              <h1>让笔记，成为记忆。</h1>
-              <p>专注记录，用每一次回忆，留住学过的知识。</p>
+              <span className="eyebrow">为长期记忆而写</span>
+              <h1>记下所想，<br /><span>也记住所学。</span></h1>
+              <p>把零散的知识整理成笔记，<br />在一次次主动回忆中，让理解留下来。</p>
             </div>
+            <div className="start-study-loop" aria-label="学习流程">
+              <span><i>01</i><Icon name="edit" size={18} />记录</span>
+              <Icon name="arrow" size={14} />
+              <span><i>02</i><Icon name="review" size={18} />回忆</span>
+              <Icon name="arrow" size={14} />
+              <span><i>03</i><Icon name="spark" size={18} />巩固</span>
+            </div>
+            <div className="start-local-note"><Icon name="shield" size={15} />Markdown 笔记，保存在你自己的电脑里。</div>
+            <button type="button" className="text-button guide-entry" onClick={guide.openIntro}><Icon name="book" size={15} />新手引导</button>
+            </section>
+            <section className="start-workspace">
+            <span className="eyebrow">从一个文件夹开始</span>
+            <h2>打开你的知识空间</h2>
             <p className="hint start-note">选择存放 Markdown 笔记的本地文件夹，开始记录与复习。</p>
             <details className="start-details"><summary>存储位置与磁盘要求</summary><p className="hint">
               打开一个文件夹作为知识库。首次打开会在该文件夹创建
@@ -1867,7 +1956,7 @@ export function M2App() {
                 </span>
               </div>
             )}
-            <button className="primary" onClick={() => void pickWorkspace()}>
+            <button className="primary" data-guide="workspace" onClick={() => void pickWorkspace()}>
               <Icon name="folder" />选择知识库文件夹…<Icon name="arrow" />
             </button>
             {recents.length > 0 && (
@@ -1896,6 +1985,7 @@ export function M2App() {
                 </div>
               </>
             )}
+            </section>
           </div>
         </div>
       )}

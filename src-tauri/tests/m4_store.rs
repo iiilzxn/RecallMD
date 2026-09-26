@@ -125,7 +125,7 @@ fn m4_ddl_matches_spec() {
     let conn = temp_db("ddl");
     assert_eq!(
         conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(),
-        1
+        recallmd_lib::persistence::store::migrate::APP_SCHEMA_VERSION as i64
     );
     let mut stmt = conn
         .prepare("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { indexIpc, type RegisteredBlockDto } from "../index/ipc";
 import type { HostErrorShape } from "../editor/ipc";
 import type { ReviewService } from "../review/service";
+import { Icon } from "./Icon";
 
 /** Restore participation through existing commands; never reset learning history. */
 export function ParticipationManager({ service, onChanged }: {
@@ -73,7 +74,7 @@ export function ParticipationManager({ service, onChanged }: {
   return (
     <section className="stats-section participation-manager" aria-labelledby="participation-title" aria-busy={loading}>
       <div className="section-heading">
-        <h3 id="participation-title">复习内容管理</h3>
+        <h3 id="participation-title"><Icon name="list" size={18} />复习内容管理</h3>
         <button type="button" className="btn small" disabled={loading || busy !== null} onClick={() => void refresh()}>刷新列表</button>
       </div>
       <p className="hint">找回已暂停或已排除的内容。恢复会保留原有学习进度，不会重新开始。</p>

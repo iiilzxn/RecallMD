@@ -135,6 +135,12 @@ export type ParticipationAction = "PAUSE" | "RESUME" | "EXCLUDE" | "INCLUDE";
 // --- 客户端 ---
 
 export const reviewIpc = {
+  learningBegin(blockId: string): Promise<ReviewBeginResultDto> {
+    return ipcCall<ReviewBeginResultDto>("learning_begin", { blockId });
+  },
+  learningQueue(pageSize?: number): Promise<ReviewQueueResultDto> {
+    return ipcCall<ReviewQueueResultDto>("learning_queue", { pageSize: pageSize ?? null });
+  },
   reviewBegin(blockId: string): Promise<ReviewBeginResultDto> {
     return ipcCall<ReviewBeginResultDto>("review_begin", { blockId });
   },

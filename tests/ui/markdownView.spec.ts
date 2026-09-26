@@ -9,7 +9,7 @@
 // node 环境：只创建 React 元素（无 DOM 渲染），结构断言走元素树；懒加载组件
 // 只创建 lazy 元素不触发 import。
 
-import { isValidElement, Suspense, type ReactNode } from "react";
+import { createElement, isValidElement, Suspense, type ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import {
   classifyLinkUrl,
@@ -467,6 +467,22 @@ describe("受控渲染", () => {
 });
 
 describe("目录提取 extractHeadings", () => {
+  it("标题操作按原文位置区分同名小节，并保留锚点；引用和代码中的标题不附加操作", () => {
+    const text = "## 同名\n\n第一段\n\n> ## 引用\n\n```md\n## 代码\n```\n\n## 同名\n\n第二段\n";
+    const seen: number[] = [];
+    const nodes = renderMarkdown(text, { baseDir: "", renderHeadingActions: (heading) => {
+      seen.push(heading.offset);
+      return createElement("button", { type: "button" }, "+");
+    } });
+    expect(seen).toEqual([0, text.lastIndexOf("## 同名")]);
+    expect(findByClass(nodes, "md-heading-with-actions")).toHaveLength(2);
+    expect(find(nodes, "button")).toHaveLength(2);
+    const headings = find(nodes, "h2");
+    expect(headings.filter((h) => h.props.id).map((h) => h.props.id)).toEqual(["同名", "同名-2"]);
+    expect(headings.filter((h) => h.props.id).map((h) => h.props["data-offset"])).toEqual(seen);
+    // 复习渲染不提供此回调，因此不会附带加号、标签或答案。
+    expect(find(renderMarkdown(text, { baseDir: "" }), "button")).toHaveLength(0);
+  });
   it("层级/文本/偏移；Setext 标题（=== 为 h1）计入；偏移指向标题文本起点", () => {
     const md = "---\nt: 1\n---\n\n# 一级\n\n正文\n\n## 二级\n\nSetext 标题\n===\n\n### 三级\n";
     const hs = extractHeadings(md);

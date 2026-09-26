@@ -7,7 +7,7 @@ use recallmd_lib::persistence::store::dto::{
 };
 use recallmd_lib::persistence::store::open_test_db;
 use recallmd_lib::persistence::store::review::{
-    app_config_on, app_config_set_on, review_begin_on, review_queue_on, review_stats_on,
+    app_config_on, app_config_set_on, learning_begin_on, learning_queue_on, review_begin_on, review_queue_on, review_stats_on,
     set_prompt_on, submit_review_on, ReviewTokens, SchedulerOutcomeDto, SubmitReviewRequest,
 };
 use rusqlite::Connection;
@@ -310,4 +310,198 @@ fn m6_set_prompt_updates_and_invalidates_session() {
         set_prompt_on(&mut s, &new_id(), Some("x")).unwrap_err().code,
         "REVIEW_REJECTED"
     );
+}
+
+#[test]
+fn note_rubrics_edit_before_due_without_consuming_learning_quota() {
+    use recallmd_lib::persistence::store::rubric::{note_read_on, note_save_on, SaveNoteRubric};
+    let mut conn = temp_db("note-rubric");
+    let id = new_id();
+    seed_block(&mut conn, &id, "note.md", "original", 0);
+    app_config_set_on(&conn, "review.daily_new_limit", "0").unwrap();
+    let before = review_stats_on(&conn).unwrap();
+    let due: i64 = conn.query_row("SELECT scheduled_due_at FROM ReviewState WHERE block_id = ?1", [&id], |r| r.get(0)).unwrap();
+    let hash = h64("doc-original");
+    let entries = note_read_on(&conn, "note.md", &hash).unwrap();
+    assert_eq!(entries.len(), 1);
+    let request = SaveNoteRubric { relative_path: "note.md".into(), expected_hash: hash.clone(), block_id: id.clone(), expected_points: vec![], points: vec!["超过五字的完整得分点仍保存全文".into(), "第二个得分点".into()] };
+    let saved = note_save_on(&mut conn, &request).unwrap();
+    assert_eq!(saved.points, request.points);
+    assert_eq!(note_read_on(&conn, "note.md", &hash).unwrap()[0].points, request.points);
+    assert_eq!(review_stats_on(&conn).unwrap().rated_today, before.rated_today);
+    assert_eq!(conn.query_row("SELECT scheduled_due_at FROM ReviewState WHERE block_id = ?1", [&id], |r| r.get::<_, i64>(0)).unwrap(), due);
+    let mut next = request;
+    next.expected_points = saved.points;
+    next.points = vec![];
+    assert!(note_save_on(&mut conn, &next).unwrap().points.is_empty());
+}
+
+#[test]
+fn note_rubrics_reject_stale_versions_wrong_sections_and_concurrent_edits() {
+    use recallmd_lib::persistence::store::rubric::{note_read_on, note_save_on, read_on, SaveNoteRubric};
+    let mut conn = temp_db("note-rubric-stale");
+    let id = new_id();
+    seed_block(&mut conn, &id, "note.md", "original", 0);
+    make_due(&conn, &id);
+    let mut tokens = ReviewTokens::default();
+    let begin = review_begin_on(&conn, &mut tokens, &id).unwrap();
+    let mut request = SaveNoteRubric { relative_path: "note.md".into(), expected_hash: h64("doc-original"), block_id: id.clone(), expected_points: vec![], points: vec!["当前标准".into()] };
+    note_save_on(&mut conn, &request).unwrap();
+    assert_eq!(note_save_on(&mut conn, &request).unwrap_err().code, "JEV_RUBRIC_STALE");
+    assert_eq!(recallmd_lib::persistence::store::review::jev_grade_context_on(&conn, &tokens, &begin.token).unwrap_err().code, "REVIEW_TOKEN_STALE");
+    request.expected_points = vec!["当前标准".into()];
+    request.expected_hash = h64("old-version");
+    assert_eq!(note_save_on(&mut conn, &request).unwrap_err().code, "JEV_NOTE_STALE");
+    request.expected_hash = h64("doc-original");
+    request.relative_path = "another.md".into();
+    assert_eq!(note_save_on(&mut conn, &request).unwrap_err().code, "JEV_NOTE_STALE");
+    assert_eq!(read_on(&conn, &id).unwrap().points, vec!["当前标准"]);
+    conn.execute("UPDATE KnowledgeBlock SET status = 'ID_CONFLICT' WHERE block_id = ?1", [&id]).unwrap();
+    assert!(note_read_on(&conn, "note.md", &h64("doc-original")).unwrap().is_empty());
+}
+
+#[test]
+fn jev_rubric_persists_without_leaking_into_queue_and_invalidates_tokens() {
+    use recallmd_lib::persistence::store::{rubric, review::jev_grade_context_on};
+    let mut conn = temp_db("jev-rubric");
+    let id = new_id();
+    seed_block(&mut conn, &id, "jev.md", "original", 0);
+    make_due(&conn, &id);
+    let mut tokens = ReviewTokens::default();
+    let before = review_begin_on(&conn, &mut tokens, &id).unwrap();
+    assert_eq!(jev_grade_context_on(&conn, &tokens, &before.token).unwrap_err().code, "JEV_RUBRIC_MISSING");
+    rubric::save_on(&mut conn, &id, &["  独立的秘密得分点  ".into(), "必要条件".into()]).unwrap();
+    assert_eq!(rubric::read_on(&conn, &id).unwrap().points, vec!["独立的秘密得分点", "必要条件"]);
+    assert_eq!(jev_grade_context_on(&conn, &tokens, &before.token).unwrap_err().code, "REVIEW_TOKEN_STALE");
+    let queue = serde_json::to_string(&review_queue_on(&conn, None).unwrap()).unwrap();
+    assert!(!queue.contains("独立的秘密得分点"));
+    let fresh = review_begin_on(&conn, &mut tokens, &id).unwrap();
+    assert_eq!(jev_grade_context_on(&conn, &tokens, &fresh.token).unwrap().points.len(), 2);
+    tokens.remove(&fresh.token);
+    assert_eq!(jev_grade_context_on(&conn, &tokens, &fresh.token).unwrap_err().code, "REVIEW_TOKEN_INVALID");
+}
+
+#[test]
+fn jev_invalid_rubric_does_not_overwrite_or_advance_state() {
+    use recallmd_lib::persistence::store::{rubric, review::jev_grade_context_on};
+    let mut conn = temp_db("jev-invalid");
+    let id = new_id();
+    seed_block(&mut conn, &id, "jev.md", "original", 0);
+    make_due(&conn, &id);
+    rubric::save_on(&mut conn, &id, &["原标准".into()]).unwrap();
+    let mut tokens = ReviewTokens::default();
+    let begin = review_begin_on(&conn, &mut tokens, &id).unwrap();
+    for invalid in [vec![" ".into()], vec!["点".into(); 31], vec!["中".repeat(501)]] {
+        assert!(rubric::save_on(&mut conn, &id, &invalid).is_err());
+        assert_eq!(jev_grade_context_on(&conn, &tokens, &begin.token).unwrap().points, vec!["原标准"]);
+    }
+    rubric::save_on(&mut conn, &id, &[]).unwrap();
+    let fresh = review_begin_on(&conn, &mut tokens, &id).unwrap();
+    assert_eq!(jev_grade_context_on(&conn, &tokens, &fresh.token).unwrap_err().code, "JEV_RUBRIC_MISSING");
+}
+
+#[test]
+fn jev_saving_from_stale_page_does_not_adopt_changed_content() {
+    use recallmd_lib::persistence::store::{rubric, review::{save_rubric_for_review_on, jev_grade_context_on}};
+    let mut conn = temp_db("jev-stale-save");
+    let id = new_id();
+    seed_block(&mut conn, &id, "jev.md", "original", 0);
+    make_due(&conn, &id);
+    let mut tokens = ReviewTokens::default();
+    let begin = review_begin_on(&conn, &mut tokens, &id).unwrap();
+    let updated = save_rubric_for_review_on(&mut conn, &mut tokens, &begin.token, &["原标准".into()]).unwrap();
+    assert_eq!(updated.state.state_revision, begin.state.state_revision + 1);
+    assert_eq!(jev_grade_context_on(&conn, &tokens, &updated.token).unwrap().points, vec!["原标准"]);
+    conn.execute("UPDATE KnowledgeBlock SET content_version = content_version + 1 WHERE block_id = ?1", [&id]).unwrap();
+    assert_eq!(save_rubric_for_review_on(&mut conn, &mut tokens, &updated.token, &["新标准".into()]).unwrap_err().code, "REVIEW_TOKEN_STALE");
+    assert_eq!(rubric::read_on(&conn, &id).unwrap().points, vec!["原标准"]);
+}
+
+#[test]
+fn immediate_learning_keeps_original_schedule_until_first_rating() {
+    let mut s = temp_db("learn-now");
+    let mut tokens = ReviewTokens::default();
+    let b = new_id();
+    seed_block(&mut s, &b, "new.md", "new", 0);
+    assert!(review_queue_on(&s, None).unwrap().items.is_empty());
+    assert_eq!(review_begin_on(&s, &mut tokens, &b).unwrap_err().code, "REVIEW_REJECTED");
+    let q = learning_queue_on(&s, None).unwrap();
+    assert_eq!(q.items.len(), 1);
+    assert_eq!(q.counts.new_total, 1);
+    let original_due = q.items[0].next_review_at;
+    let begin = learning_begin_on(&s, &mut tokens, &b).unwrap();
+    assert!(original_due > begin.now_ms);
+    assert_eq!(begin.state.scheduled_due_at, original_due);
+    assert_eq!(begin.state.reps, 0);
+    assert_eq!(begin.state.state_revision, 0);
+    assert_eq!(learning_queue_on(&s, None).unwrap().quota.used_today, 0);
+
+    set_prompt_on(&mut s, &b, Some("什么情况下需要回表？")).unwrap();
+    let make_request = |token: String, now: i64| SubmitReviewRequest {
+        request_id: new_id(), token, rating: 3, now_ms: now,
+        change_resolution: None, context_used: false, duration_ms: Some(1000),
+        outcome: outcome_good_on_empty(now),
+    };
+    let stale = make_request(begin.token, begin.now_ms);
+    assert_eq!(submit_review_on(&mut s, &mut tokens, &stale).unwrap_err().code, "REVIEW_TOKEN_STALE");
+    let q = learning_queue_on(&s, None).unwrap();
+    assert_eq!(q.items[0].recall_prompt.as_deref(), Some("什么情况下需要回表？"));
+    assert_eq!(q.items[0].next_review_at, original_due);
+
+    let begin = learning_begin_on(&s, &mut tokens, &b).unwrap();
+    let req = make_request(begin.token, begin.now_ms);
+    let result = submit_review_on(&mut s, &mut tokens, &req).unwrap();
+    assert_eq!(result.next_review_at, req.now_ms + 600_000);
+    assert_eq!(result.quota.used_today, 1);
+    assert!(submit_review_on(&mut s, &mut tokens, &req).unwrap().replayed);
+    assert!(learning_queue_on(&s, None).unwrap().items.is_empty());
+    assert_eq!(learning_begin_on(&s, &mut tokens, &b).unwrap_err().code, "REVIEW_REJECTED");
+    assert_eq!(review_begin_on(&s, &mut tokens, &b).unwrap_err().code, "REVIEW_REJECTED");
+    make_due(&s, &b);
+    assert_eq!(review_queue_on(&s, None).unwrap().items[0].phase, "LEARNING");
+    assert!(review_begin_on(&s, &mut tokens, &b).is_ok());
+}
+
+#[test]
+fn immediate_learning_respects_quota_even_if_it_changes_after_begin() {
+    let mut s = temp_db("learn-quota");
+    let mut tokens = ReviewTokens::default();
+    let b = new_id();
+    seed_block(&mut s, &b, "new.md", "new", 0);
+    let begin = learning_begin_on(&s, &mut tokens, &b).unwrap();
+    app_config_set_on(&mut s, "review.daily_new_limit", "0").unwrap();
+    let q = learning_queue_on(&s, Some(50)).unwrap();
+    assert!(q.items.is_empty());
+    assert_eq!(q.counts.new_total, 1);
+    assert_eq!(learning_begin_on(&s, &mut tokens, &b).unwrap_err().code, "QUOTA_EXCEEDED");
+    let req = SubmitReviewRequest {
+        request_id: new_id(), token: begin.token, rating: 3, now_ms: begin.now_ms,
+        change_resolution: None, context_used: false, duration_ms: None,
+        outcome: outcome_good_on_empty(begin.now_ms),
+    };
+    assert_eq!(submit_review_on(&mut s, &mut tokens, &req).unwrap_err().code, "QUOTA_EXCEEDED");
+    app_config_set_on(&mut s, "review.daily_new_limit", "1").unwrap();
+    assert_eq!(learning_queue_on(&s, None).unwrap().items.len(), 1);
+    assert_eq!(learning_begin_on(&s, &mut tokens, &b).unwrap().state.reps, 0);
+}
+
+#[test]
+fn immediate_learning_excludes_unavailable_and_previously_rated_blocks() {
+    let mut s = temp_db("learn-eligibility");
+    let mut tokens = ReviewTokens::default();
+    for (index, condition) in [
+        "participation = 'PAUSED'", "participation = 'EXCLUDED'",
+        "first_review_at = 1000", "phase = 'REVIEW'",
+    ].iter().enumerate() {
+        let b = new_id();
+        seed_block(&mut s, &b, &format!("{index}.md"), "new", 0);
+        s.execute(&format!("UPDATE ReviewState SET {condition} WHERE block_id = ?1"), [&b]).unwrap();
+        assert!(learning_begin_on(&s, &mut tokens, &b).is_err());
+    }
+    let missing = new_id();
+    seed_block(&mut s, &missing, "missing.md", "new", 0);
+    s.execute("UPDATE Document SET status = 'MISSING' WHERE relative_path = 'missing.md'", []).unwrap();
+    assert!(learning_begin_on(&s, &mut tokens, &missing).is_err());
+    assert!(learning_queue_on(&s, None).unwrap().items.is_empty());
+    assert_eq!(learning_queue_on(&s, None).unwrap().counts.new_total, 0);
 }

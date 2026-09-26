@@ -1506,9 +1506,26 @@ button.danger:hover:not(:disabled) {
 }
 
 .review-prompt-row {
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.review-goal-editor {
+  margin: 18px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.review-goal-editor .hint {
+  line-height: 1.7;
+}
+
+.review-mode-hint {
+  line-height: 1.7;
+  margin: 12px 0;
 }
 
 .review-prompt-label {
@@ -1536,6 +1553,52 @@ button.danger:hover:not(:disabled) {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
+
+.jev-textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  padding: 14px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.8;
+}
+.jev-textarea:focus { outline: 2px solid var(--accent-ring); border-color: var(--accent); }
+.jev-textarea:disabled { opacity: .7; }
+.jev-answer-entry { margin: 24px 0; }
+.jev-answer-entry > label { font-weight: 600; }
+.jev-section-heading, .jev-inline-actions, .jev-point-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+}
+.jev-section-heading { justify-content: space-between; }
+.jev-section-heading h3 { margin: 0; font-size: 15px; }
+.jev-rubric { border-top: 1px solid var(--border); margin-top: 24px; padding: 22px 0 8px; }
+.jev-inline-actions { margin-top: 12px; }
+.jev-saved-points, .jev-point-results { padding-left: 24px; line-height: 1.8; overflow-wrap: anywhere; }
+.jev-saved-points li { padding: 3px 0; }
+.jev-feedback { margin: 24px 0; padding: 22px; border: 1px solid var(--accent-border); background: var(--accent-softer); border-radius: 12px; }
+.jev-total { font-size: 32px; font-weight: 650; color: var(--accent); }
+.jev-total small { font-size: 14px; font-weight: 400; color: var(--text-3); }
+.jev-total.jev-total-uncertain { font-size: 22px; color: var(--warn); }
+.jev-uncertainty-note { padding: 12px 14px; border-radius: 8px; background: var(--warn-soft); color: var(--warn); font-size: 13px; line-height: 1.7; }
+.jev-point-results li { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.jev-point-results li > p { margin: 0 0 6px; }
+.jev-point-detail { font-size: 12px; }
+.jev-answer-snapshot { margin-top: 14px; font-size: 13px; }
+.jev-answer-snapshot summary { cursor: pointer; color: var(--text-2); }
+.jev-answer-snapshot p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.jev-key-form { margin-top: 18px; }
+.jev-key-form > label { display: block; margin-bottom: 8px; font-size: 13px; }
+.jev-key-form .text-input { flex: 1; min-width: 150px; max-width: 520px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 .review-hidden {
   background: var(--surface-sunken);
@@ -2018,6 +2081,36 @@ button.danger:hover:not(:disabled) {
 .review-body h6 {
   font-size: 1.04em;
 }
+
+/* 小节标题旁的得分点：正文仍由原有 Markdown 渲染，标注独立于内容。 */
+.md-preview-inner .md-heading-with-actions {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 1.4em 0 .55em;
+  font-size: 1.04em;
+}
+.md-preview-inner .md-heading-with-actions[data-level="1"] { font-size: 1.55em; padding-bottom: .3em; border-bottom: 1px solid var(--border); }
+.md-preview-inner .md-heading-with-actions[data-level="2"] { font-size: 1.32em; padding-bottom: .25em; border-bottom: 1px solid var(--divider-soft); }
+.md-preview-inner .md-heading-with-actions[data-level="3"] { font-size: 1.16em; }
+.md-preview-inner .md-heading-with-actions > :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: inherit;
+  min-width: 0;
+}
+.note-point-actions { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; max-width: 100%; vertical-align: middle; }
+.note-point-add, .note-point-chip { display: inline-flex; align-items: center; justify-content: center; min-height: 26px; line-height: 1.4; font-family: var(--font-ui); font-size: 12px; font-weight: 400; }
+.note-point-add { width: 26px; height: 26px; padding: 0; border: 1px dashed var(--accent-border); border-radius: 50%; background: transparent; color: var(--accent); }
+.note-point-add:hover { border-style: solid; background: var(--accent-soft); }
+.note-point-chip { padding: 3px 10px; border: 1px solid var(--accent-border); border-radius: 20px; background: var(--accent-softer); color: var(--accent); white-space: nowrap; }
+.note-point-chip:hover { background: var(--accent-soft); border-color: var(--accent); }
+.note-point-chip:focus-visible, .note-point-add:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 3px; }
+.note-point-tooltip { position: fixed; z-index: 2000; box-sizing: border-box; width: max-content; max-width: min(400px, calc(100vw - 24px)); padding: 12px 15px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); color: var(--text); box-shadow: 0 8px 28px #0003; font: 13px/1.7 var(--font-ui); white-space: pre-wrap; overflow-wrap: anywhere; pointer-events: none; }
+.note-point-section-name { color: var(--text-2); font-size: 13px; overflow-wrap: anywhere; }
+.note-points-hint { font-size: 12px; }
 
 .md-preview-inner p,
 .review-body p {

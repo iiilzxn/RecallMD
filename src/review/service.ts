@@ -73,11 +73,13 @@ export class ReviewService {
     return this.deps.clock.nowMs();
   }
 
-  queue(pageSize?: number): Promise<ReviewQueueResultDto> {
+  queue(pageSize?: number, learnNow = false): Promise<ReviewQueueResultDto> {
+    if (learnNow) return this.deps.ipc.learningQueue(pageSize);
     return this.deps.ipc.reviewQueue(pageSize);
   }
 
-  begin(blockId: string): Promise<ReviewBeginResultDto> {
+  begin(blockId: string, learnNow = false): Promise<ReviewBeginResultDto> {
+    if (learnNow) return this.deps.ipc.learningBegin(blockId);
     return this.deps.ipc.reviewBegin(blockId);
   }
 

@@ -7,10 +7,13 @@ use rusqlite::Connection;
 use super::super::error::{HostError, HostResult, MIGRATION_FAILED};
 
 /// 当前程序支持的 schema 版本
-pub const APP_SCHEMA_VERSION: u32 = 1;
+pub const APP_SCHEMA_VERSION: u32 = 2;
 
 /// 有序迁移表：[(目标版本, 该版本的全部 DDL)]。只追加，不修改历史条目。
-const MIGRATIONS: &[(u32, &str)] = &[(1, super::schema::DDL_V1)];
+const MIGRATIONS: &[(u32, &str)] = &[
+    (1, super::schema::DDL_V1),
+    (2, "CREATE TABLE ReviewRubric (block_id TEXT PRIMARY KEY NOT NULL REFERENCES KnowledgeBlock(block_id) ON DELETE RESTRICT, points_json TEXT NOT NULL CHECK(json_valid(points_json)));")
+];
 
 #[derive(Debug)]
 pub struct MigrateOutcome {
@@ -91,11 +94,11 @@ mod tests {
     }
 
     #[test]
-    fn fresh_install_applies_v1_once() {
+    fn fresh_install_applies_migrations_once() {
         let mut conn = mem();
         let out = run(&mut conn, &|_| Ok(())).unwrap();
-        assert_eq!(out.applied, vec![1]);
-        assert_eq!(read_user_version(&conn).unwrap(), 1);
+        assert_eq!(out.applied, vec![1, 2]);
+        assert_eq!(read_user_version(&conn).unwrap(), APP_SCHEMA_VERSION);
         // 重跑 = no-op
         let again = run(&mut conn, &|_| Ok(())).unwrap();
         assert!(again.applied.is_empty());
@@ -108,5 +111,40 @@ mod tests {
         conn.pragma_update(None, "user_version", 99).unwrap();
         let err = run(&mut conn, &|_| Ok(())).unwrap_err();
         assert_eq!(err.code, MIGRATION_FAILED);
+    }
+
+    #[test]
+    fn v1_upgrade_backs_up_and_keeps_existing_data() {
+        let mut conn = mem();
+        conn.execute_batch(super::super::schema::DDL_V1).unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+        let id = super::super::schema::ensure_workspace_row(
+            &conn,
+            Some("existing-workspace"),
+            "原知识库",
+            100,
+        )
+        .unwrap();
+        let backups = std::cell::Cell::new(0);
+        let out = run(&mut conn, &|old| {
+            assert_eq!(read_user_version(old).unwrap(), 1);
+            backups.set(backups.get() + 1);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(out.applied, vec![2]);
+        assert_eq!(backups.get(), 1);
+        assert_eq!(
+            conn.query_row("SELECT workspace_id FROM Workspace", [], |r| r
+                .get::<_, String>(0))
+                .unwrap(),
+            id
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM ReviewRubric", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
     }
 }

@@ -1,6 +1,8 @@
 // Tauri 命令层：薄封装 persistence 模块（设计 §6.2 少量粗粒度有类型命令）。
 // M2 起：打开 Workspace 后命令只接受相对路径，根由激活态解析（§6.3）。
 pub mod persistence;
+pub mod jev;
+pub mod speech;
 
 use serde::Serialize;
 use tauri::Manager;
@@ -71,6 +73,7 @@ fn workspace_open(root: String, app: tauri::AppHandle) -> HostResult<WorkspaceIn
 
 #[tauri::command]
 fn workspace_close(app: tauri::AppHandle) -> HostResult<()> {
+    app.state::<std::sync::Arc<speech::SpeechService>>().cancel_all();
     // 收回 asset 协议对旧根的访问（切换工作区后旧根不再可读）
     if let Ok(root) = active_root() {
         let _ = app.asset_protocol_scope().forbid_directory(&root, true);
@@ -378,6 +381,30 @@ fn review_begin(
 }
 
 #[tauri::command]
+fn learning_begin(
+    block_id: String,
+) -> HostResult<crate::persistence::store::review::ReviewBeginResult> {
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::LearningBegin { block_id })?
+    {
+        crate::persistence::store::DbReply::ReviewBegin(r) => Ok(*r),
+        _ => unreachable!("LearningBegin 应答"),
+    }
+}
+
+#[tauri::command]
+fn learning_queue(
+    page_size: Option<i64>,
+) -> HostResult<crate::persistence::store::review::ReviewQueueResult> {
+    match crate::persistence::workspace::active_store()?
+        .call(crate::persistence::store::DbAction::LearningQueue { page_size })?
+    {
+        crate::persistence::store::DbReply::ReviewQueue(r) => Ok(*r),
+        _ => unreachable!("LearningQueue 应答"),
+    }
+}
+
+#[tauri::command]
 fn review_submit(
     request: crate::persistence::store::review::SubmitReviewRequest,
 ) -> HostResult<crate::persistence::store::review::SubmitReviewResult> {
@@ -496,12 +523,124 @@ fn audit_hash_batch(
 
 // HostError 实现 Serialize，Tauri 命令的 Err 会按 §14.1 类型化协议序列化给前端
 
+fn jev_config_dir(app: &tauri::AppHandle) -> HostResult<std::path::PathBuf> {
+    app.path().app_config_dir().map_err(|_| crate::persistence::error::HostError::new("JEV_CONFIG_ERROR", "无法访问应用配置目录"))
+}
+
+#[tauri::command]
+fn jev_config_read(app: tauri::AppHandle) -> HostResult<jev::ConfigStatus> {
+    jev::config_status(&jev_config_dir(&app)?)
+}
+
+#[tauri::command]
+fn jev_config_save(app: tauri::AppHandle, enabled: bool, api_key: Option<String>) -> HostResult<jev::ConfigStatus> {
+    jev::save_config(&jev_config_dir(&app)?, enabled, api_key)
+}
+
+#[tauri::command]
+fn jev_key_clear(app: tauri::AppHandle) -> HostResult<jev::ConfigStatus> {
+    jev::clear_key(&jev_config_dir(&app)?)
+}
+
+#[tauri::command]
+fn review_rubric_read(block_id: String) -> HostResult<crate::persistence::store::rubric::Rubric> {
+    use crate::persistence::store::{DbAction, DbReply};
+    match crate::persistence::workspace::active_store()?.call(DbAction::RubricRead { block_id })? {
+        DbReply::Rubric(r) => Ok(r), _ => unreachable!("RubricRead 应答"),
+    }
+}
+
+#[tauri::command]
+fn review_rubric_save(token: String, points: Vec<String>) -> HostResult<crate::persistence::store::review::ReviewBeginResult> {
+    use crate::persistence::store::{DbAction, DbReply};
+    match crate::persistence::workspace::active_store()?.call(DbAction::RubricSave { token, points })? {
+        DbReply::ReviewBegin(begin) => Ok(*begin), _ => unreachable!("RubricSave 应答"),
+    }
+}
+
+#[tauri::command]
+async fn jev_grade(app: tauri::AppHandle, token: String, answer: String) -> HostResult<jev::GradeResult> {
+    use crate::persistence::store::{DbAction, DbReply};
+    let store = crate::persistence::workspace::active_store()?;
+    let context = match store.call(DbAction::JevGradeContext { token: token.clone() })? {
+        DbReply::JevGradeContext(c) => c, _ => unreachable!("JevGradeContext 应答"),
+    };
+    let result = jev::grade(&jev_config_dir(&app)?, &context, &answer).await?;
+    // 请求期间标准/题面/参与状态改变，旧结果不可用于当前题。
+    store.call(DbAction::JevGradeContext { token })?;
+    Ok(result)
+}
+
+#[tauri::command]
+fn note_rubrics_read(relative_path: String, expected_hash: String) -> HostResult<Vec<crate::persistence::store::rubric::NoteRubric>> {
+    use crate::persistence::store::{DbAction, DbReply};
+    match crate::persistence::workspace::active_store()?.call(DbAction::NoteRubricsRead { relative_path, expected_hash })? {
+        DbReply::NoteRubrics(entries) => Ok(entries), _ => unreachable!("NoteRubricsRead 应答"),
+    }
+}
+
+#[tauri::command]
+fn note_rubric_save(request: crate::persistence::store::rubric::SaveNoteRubric) -> HostResult<crate::persistence::store::rubric::NoteRubric> {
+    use crate::persistence::store::{DbAction, DbReply};
+    // 外部编辑可能尚未被 watcher 同步，保存元数据前也要核对磁盘版本。
+    let stat = stat_document_impl(&root_str()?, &request.relative_path)?;
+    if stat.raw_byte_hash.as_deref() != Some(request.expected_hash.as_str()) {
+        return Err(crate::persistence::error::HostError::new("JEV_NOTE_STALE", "笔记原文已变化，请重新打开笔记后编辑得分点"));
+    }
+    match crate::persistence::workspace::active_store()?.call(DbAction::NoteRubricSave(request))? {
+        DbReply::NoteRubric(entry) => Ok(entry), _ => unreachable!("NoteRubricSave 应答"),
+    }
+}
+
+fn speech_paths(app: &tauri::AppHandle) -> HostResult<(std::path::PathBuf, std::path::PathBuf)> {
+    let config = app.path().app_config_dir().map_err(|_| crate::persistence::error::HostError::new("SPEECH_CONFIG", "无法获取语音设置目录"))?;
+    let mut models = app.path().app_local_data_dir().map_err(|_| crate::persistence::error::HostError::new("SPEECH_CONFIG", "无法获取本地模型目录"))?.join("speech-models");
+    if cfg!(debug_assertions) {
+        let prepared = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../speech-lab.local/models");
+        if prepared.is_dir() { models = prepared.canonicalize().unwrap_or(prepared); }
+    }
+    Ok((config, models))
+}
+#[tauri::command]
+fn speech_config_read(app: tauri::AppHandle) -> HostResult<speech::ConfigStatus> { let (dir, root) = speech_paths(&app)?; speech::config_status(&dir, &root) }
+#[tauri::command]
+fn speech_config_save(config: speech::SavedConfig, app: tauri::AppHandle) -> HostResult<speech::ConfigStatus> { let (dir, root) = speech_paths(&app)?; speech::save_config(&dir, &root, config) }
+#[tauri::command]
+fn speech_devices() -> HostResult<Vec<String>> { speech::devices() }
+#[tauri::command]
+async fn speech_start(session_id: String, app: tauri::AppHandle) -> HostResult<speech::CaptureStatus> {
+    let (dir, root) = speech_paths(&app)?;
+    let config = speech::read_config(&dir, &root)?;
+    let service = app.state::<std::sync::Arc<speech::SpeechService>>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || service.start(session_id, config)).await
+        .map_err(|_| crate::persistence::error::HostError::new("SPEECH_START", "录音启动失败，请重试"))?
+}
+#[tauri::command]
+fn speech_status(session_id: String, app: tauri::AppHandle) -> HostResult<speech::CaptureStatus> { app.state::<std::sync::Arc<speech::SpeechService>>().status(&session_id) }
+#[tauri::command]
+async fn speech_stop(session_id: String, app: tauri::AppHandle) -> HostResult<speech::Transcript> {
+    let service = app.state::<std::sync::Arc<speech::SpeechService>>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || service.stop(&session_id)).await
+        .map_err(|_| crate::persistence::error::HostError::new("SPEECH_DECODE", "本地转写失败，请重试或切换模型"))?
+}
+#[tauri::command]
+fn speech_cancel(session_id: String, app: tauri::AppHandle) { app.state::<std::sync::Arc<speech::SpeechService>>().cancel(&session_id); }
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(std::sync::Arc::new(speech::SpeechService::default()))
+        .on_window_event(|window, event| { if matches!(event, tauri::WindowEvent::Destroyed) { window.state::<std::sync::Arc<speech::SpeechService>>().cancel_all(); } })
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             m0_environment,
+            speech_config_read,
+            speech_config_save,
+            speech_devices,
+            speech_start,
+            speech_status,
+            speech_stop,
+            speech_cancel,
             workspace_open,
             workspace_close,
             workspace_info,
@@ -537,6 +676,8 @@ pub fn run() {
             backup_full,
             backup_full_restore,
             review_begin,
+            learning_begin,
+            learning_queue,
             review_submit,
             review_queue,
             review_set_participation,
@@ -544,6 +685,14 @@ pub fn run() {
             review_stats,
             app_config_read,
             app_config_set,
+            jev_config_read,
+            jev_config_save,
+            jev_key_clear,
+            review_rubric_read,
+            review_rubric_save,
+            note_rubrics_read,
+            note_rubric_save,
+            jev_grade,
             review_set_prompt,
             mark_doc_status,
             audit_quick,

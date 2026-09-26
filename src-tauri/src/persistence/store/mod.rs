@@ -16,6 +16,7 @@ pub mod ops;
 pub mod query;
 pub mod recovery;
 pub mod review;
+pub mod rubric;
 pub mod schema;
 
 use std::path::{Path, PathBuf};
@@ -114,6 +115,8 @@ pub enum DbAction {
     },
     /// M5：题面揭示——核验可评分并签发复习令牌（§10.4）
     ReviewBegin { block_id: String },
+    LearningBegin { block_id: String },
+    LearningQueue { page_size: Option<i64> },
     /// M5：评分提交（单事务：幂等/令牌 CAS/时钟/配额/双事件）
     ReviewSubmit(Box<SubmitReviewRequest>),
     /// M5：到期队列（分组 + 配额）
@@ -136,6 +139,11 @@ pub enum DbAction {
         block_id: String,
         prompt: Option<String>,
     },
+    RubricRead { block_id: String },
+    RubricSave { token: String, points: Vec<String> },
+    NoteRubricsRead { relative_path: String, expected_hash: String },
+    NoteRubricSave(rubric::SaveNoteRubric),
+    JevGradeContext { token: String },
     /// M7：编辑器冲突 ↔ 索引状态（CONFLICT 挡评；PENDING 待重扫，§13.4 L901）
     MarkDocStatus {
         relative: String,
@@ -160,6 +168,8 @@ impl DbAction {
             DbAction::RestoreDb { .. } => Duration::from_secs(300),
             DbAction::BackupFull { .. } => Duration::from_secs(15 * 60),
             DbAction::ReviewBegin { .. }
+            | DbAction::LearningBegin { .. }
+            | DbAction::LearningQueue { .. }
             | DbAction::ReviewQueue { .. }
             | DbAction::ReviewSetParticipation { .. }
             | DbAction::ReviewResetBlock { .. }
@@ -167,6 +177,11 @@ impl DbAction {
             | DbAction::AppConfigRead
             | DbAction::AppConfigSet { .. }
             | DbAction::ReviewSetPrompt { .. }
+            | DbAction::RubricRead { .. }
+            | DbAction::RubricSave { .. }
+            | DbAction::NoteRubricsRead { .. }
+            | DbAction::NoteRubricSave(_)
+            | DbAction::JevGradeContext { .. }
             | DbAction::MarkDocStatus { .. } => Duration::from_secs(15),
             DbAction::ReviewSubmit(_) => Duration::from_secs(30),
             DbAction::Shutdown => Duration::from_secs(10),
@@ -190,6 +205,10 @@ pub enum DbReply {
     ReviewReset(Box<ResetBlockResult>),
     ReviewStats(Box<ReviewStatsResult>),
     AppConfig(Box<AppConfigDto>),
+    Rubric(rubric::Rubric),
+    NoteRubrics(Vec<rubric::NoteRubric>),
+    NoteRubric(rubric::NoteRubric),
+    JevGradeContext(crate::jev::GradeContext),
     Ack,
 }
 
@@ -675,6 +694,14 @@ fn dispatch(conn: &mut Connection, tokens: &mut ReviewTokens, action: DbAction) 
             let result = review::review_begin_on(conn, tokens, &block_id)?;
             Ok(DbReply::ReviewBegin(Box::new(result)))
         }
+        DbAction::LearningBegin { block_id } => {
+            let result = review::learning_begin_on(conn, tokens, &block_id)?;
+            Ok(DbReply::ReviewBegin(Box::new(result)))
+        }
+        DbAction::LearningQueue { page_size } => {
+            let result = review::learning_queue_on(conn, page_size)?;
+            Ok(DbReply::ReviewQueue(Box::new(result)))
+        }
         DbAction::ReviewSubmit(req) => {
             let result = review::submit_review_on(conn, tokens, &req)?;
             Ok(DbReply::ReviewSubmit(Box::new(result)))
@@ -707,6 +734,14 @@ fn dispatch(conn: &mut Connection, tokens: &mut ReviewTokens, action: DbAction) 
             review::set_prompt_on(conn, &block_id, prompt.as_deref())?;
             Ok(DbReply::Ack)
         }
+        DbAction::RubricRead { block_id } => Ok(DbReply::Rubric(rubric::read_on(conn, &block_id)?)),
+        DbAction::NoteRubricsRead { relative_path, expected_hash } => Ok(DbReply::NoteRubrics(rubric::note_read_on(conn, &relative_path, &expected_hash)?)),
+        DbAction::NoteRubricSave(request) => Ok(DbReply::NoteRubric(rubric::note_save_on(conn, &request)?)),
+        DbAction::RubricSave { token, points } => {
+            let begin = review::save_rubric_for_review_on(conn, tokens, &token, &points)?;
+            Ok(DbReply::ReviewBegin(Box::new(begin)))
+        }
+        DbAction::JevGradeContext { token } => Ok(DbReply::JevGradeContext(review::jev_grade_context_on(conn, tokens, &token)?)),
         DbAction::MarkDocStatus { relative, status } => {
             let n = ops::mark_doc_status_on(conn, &relative, &status)?;
             Ok(DbReply::DocsChanged(n))
