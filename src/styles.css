@@ -1505,53 +1505,17 @@ button.danger:hover:not(:disabled) {
   padding: 0 6px;
 }
 
-.review-prompt-row {
-  flex-wrap: wrap;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 
-.review-goal-editor {
-  margin: 18px 0;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-
-.review-goal-editor .hint {
-  line-height: 1.7;
-}
 
 .review-mode-hint {
   line-height: 1.7;
   margin: 12px 0;
 }
 
-.review-prompt-label {
+.note-point-label {
   font-size: 13px;
   color: var(--text-2);
   white-space: nowrap;
-}
-
-.review-prompt-input {
-  flex: 1;
-  min-width: 0;
-  font: inherit;
-  font-family: var(--font-ui);
-  font-size: 13px;
-  padding: 6px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-sm);
-  background: var(--surface);
-  color: var(--text);
-  transition: border-color 0.13s, box-shadow 0.13s;
-}
-
-.review-prompt-input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 .jev-textarea {
@@ -3105,10 +3069,8 @@ button.text-button {
   .review-card, .stats-section {
     padding: 20px;
   }
-  .review-prompt-row {
-    flex-wrap: wrap;
-  }
-  .review-prompt-label {
+
+  .note-point-label {
     width: 100%;
   }
 }
@@ -3247,7 +3209,6 @@ button.text-button {
 
   button,
   .text-input,
-  .review-prompt-input,
   .tree-row,
   .tree-caret,
   .save-dot,

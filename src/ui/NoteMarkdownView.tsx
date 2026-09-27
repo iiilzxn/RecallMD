@@ -163,7 +163,7 @@ export function NoteMarkdownView({ savedHash, syncRevision, active, onInclude, o
     <MarkdownView {...markdown} renderHeadingActions={renderHeadingActions} />
     {selection && active && <Modal title={selection.index === null ? "添加得分点" : "编辑得分点"} onDismiss={busy ? undefined : () => setSelection(null)}>
       <p className="note-point-section-name">{selection.title}</p>
-      <label className="review-prompt-label" htmlFor="note-point-draft">得分点内容</label>
+      <label className="note-point-label" htmlFor="note-point-draft">得分点内容</label>
       <textarea id="note-point-draft" className="jev-textarea" rows={4} value={draft} disabled={busy} maxLength={1000}
         placeholder="写下回答中必须包含的核心含义或条件…" onChange={(event) => setDraft(event.target.value)} />
       <p className="hint">{Array.from(draft.trim()).length}/500 字 · 标题旁显示前 5 个字，悬浮查看全文。Jev 按完整内容评分。</p>

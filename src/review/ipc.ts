@@ -76,8 +76,8 @@ export interface QueueItemDto {
   needsRecheck: boolean;
   /** 从未评分（占新卡配额） */
   neverRated: boolean;
-  /** 用户回忆提示（§5.2 可选） */
-  recallPrompt: string | null;
+  /** 只传是否设有得分点，作答前不传答案标准。 */
+  hasRubric: boolean;
   /** read_document 文本上的半开范围（揭示正文用） */
   startOffset: number;
   bodyStartOffset: number;
@@ -164,9 +164,6 @@ export const reviewIpc = {
   },
   appConfigSet(key: AppConfigKey, value: string): Promise<void> {
     return ipcCall<void>("app_config_set", { key, value });
-  },
-  reviewSetPrompt(blockId: string, prompt: string | null): Promise<void> {
-    return ipcCall<void>("review_set_prompt", { blockId, prompt });
   },
 };
 

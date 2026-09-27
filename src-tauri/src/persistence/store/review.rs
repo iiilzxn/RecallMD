@@ -134,8 +134,8 @@ pub struct QueueItem {
     pub needs_recheck: bool,
     /// 从未评分（占新卡配额；§10.2 L399 重置过的块不占）
     pub never_rated: bool,
-    /// 用户回忆提示（§5.2 可选；KnowledgeBlock.recall_prompt）
-    pub recall_prompt: Option<String>,
+    /// 仅传是否设有得分点，作答前不泄露答案标准。
+    pub has_rubric: bool,
     /// 揭示正文用：read_document 文本上的 LF/UTF-16 半开范围（§12.3）
     pub start_offset: i64,
     pub body_start_offset: i64,
@@ -690,13 +690,11 @@ pub fn save_rubric_for_review_on(conn: &mut Connection, tokens: &mut ReviewToken
 
 pub fn jev_grade_context_on(conn: &Connection, tokens: &ReviewTokens, token: &str) -> HostResult<crate::jev::GradeContext> {
     let (binding, ctx) = current_token_context(conn, tokens, token)?;
-    let prompt: Option<String> = conn.query_row("SELECT recall_prompt FROM KnowledgeBlock WHERE block_id = ?1", [&binding.block_id], |r| r.get(0))
-        .map_err(|e| db_err(e, "读取评分题目"))?;
     let rubric = super::rubric::read_on(conn, &binding.block_id)?;
     if rubric.points.is_empty() {
         return Err(HostError::new("JEV_RUBRIC_MISSING", "本题尚未设置得分点，请在笔记预览中点击对应小节标题旁的「＋」添加"));
     }
-    Ok(crate::jev::GradeContext { prompt: prompt.or(ctx.title).unwrap_or_default(), points: rubric.points })
+    Ok(crate::jev::GradeContext { prompt: ctx.title.unwrap_or_else(|| "回忆这篇笔记的前言内容".into()), points: rubric.points })
 }
 
 pub fn review_begin_on(
@@ -1277,7 +1275,8 @@ pub fn reset_block_on(conn: &mut Connection, block_id: &str) -> HostResult<Reset
 
 const QUEUE_SQL_PREFIX: &str = "SELECT r.block_id, d.relative_path, b.title, \
      b.heading_path_json, r.phase, r.next_review_at, r.needs_recheck, r.first_review_at, \
-     b.recall_prompt, b.start_offset, b.body_start_offset, b.end_offset \
+     EXISTS(SELECT 1 FROM ReviewRubric g WHERE g.block_id = b.block_id AND json_array_length(g.points_json) > 0), \
+     b.start_offset, b.body_start_offset, b.end_offset \
      FROM ReviewState r \
      JOIN KnowledgeBlock b ON b.block_id = r.block_id \
      JOIN Document d ON d.document_id = b.document_id \
@@ -1321,7 +1320,7 @@ fn query_group(
                     needs_recheck: r.get::<_, i64>(6)? == 1,
                     // 行内实值（分组谓词已约束；两路合并后以此为准）
                     never_rated: first_review_at.is_none(),
-                    recall_prompt: r.get(8)?,
+                    has_rubric: r.get(8)?,
                     start_offset: r.get(9)?,
                     body_start_offset: r.get(10)?,
                     end_offset: r.get(11)?,
@@ -1565,38 +1564,4 @@ pub fn app_config_set_on(conn: &Connection, key: &str, value: &str) -> HostResul
         }
     }
     query::settings_set_string(conn, key, value, now_ms())
-}
-
-// ---------------------------------------------------------------------------
-// 块提示（§5.2 可选 recall_prompt；题面变化使令牌失效 §10.4）
-// ---------------------------------------------------------------------------
-
-pub fn set_prompt_on(conn: &mut Connection, block_id: &str, prompt: Option<&str>) -> HostResult<()> {
-    if let Some(p) = prompt {
-        if p.chars().count() > 200 {
-            return Err(rejected("回忆提示最长 200 字符"));
-        }
-    }
-    let now = now_ms();
-    let tx = conn
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-        .map_err(|e| db_err(e, "开启事务"))?;
-    let changed = tx
-        .execute(
-            "UPDATE KnowledgeBlock SET recall_prompt = ?1, updated_at = ?2 WHERE block_id = ?3",
-            rusqlite::params![prompt, now, block_id],
-        )
-        .map_err(|e| db_err(e, "更新块提示"))?;
-    if changed == 0 {
-        return Err(rejected(format!("块 {block_id} 未登记")));
-    }
-    // 题面变化 → 进行中的评分会话失效（不写历史事件，§12.5 L766 允许无事件递增）
-    tx.execute(
-        "UPDATE ReviewState SET state_revision = state_revision + 1, updated_at = ?1 \
-         WHERE block_id = ?2",
-        rusqlite::params![now, block_id],
-    )
-    .map_err(|e| db_err(e, "提示变更使会话失效"))?;
-    tx.commit().map_err(|e| db_err(e, "提交提示事务"))?;
-    Ok(())
 }

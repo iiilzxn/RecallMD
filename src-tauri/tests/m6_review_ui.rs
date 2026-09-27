@@ -1,5 +1,5 @@
-//! M6 命令层测试：队列项扩展（提示/offsets/稍后到期）、简版统计、
-//! 应用配置白名单、块提示与会话失效。
+//! M6 命令层测试：队列项扩展（得分点状态/offsets/稍后到期）、简版统计、
+//! 应用配置白名单、得分点与会话失效。
 
 use recallmd_lib::persistence::store::commit::commit_on;
 use recallmd_lib::persistence::store::dto::{
@@ -8,7 +8,7 @@ use recallmd_lib::persistence::store::dto::{
 use recallmd_lib::persistence::store::open_test_db;
 use recallmd_lib::persistence::store::review::{
     app_config_on, app_config_set_on, learning_begin_on, learning_queue_on, review_begin_on, review_queue_on, review_stats_on,
-    set_prompt_on, submit_review_on, ReviewTokens, SchedulerOutcomeDto, SubmitReviewRequest,
+    submit_review_on, ReviewTokens, SchedulerOutcomeDto, SubmitReviewRequest,
 };
 use rusqlite::Connection;
 
@@ -149,18 +149,19 @@ fn rate_once(conn: &mut Connection, tokens: &mut ReviewTokens, block_id: &str, r
 // ---------------------------------------------------------------------------
 
 #[test]
-fn m6_queue_item_carries_prompt_offsets_and_upcoming() {
+fn m6_queue_item_carries_rubric_status_offsets_and_upcoming() {
     let mut s = temp_db("queue-ext");
-    let mut tokens = ReviewTokens::default();
     let b1 = new_id();
     let b2 = new_id();
     seed_block(&mut s, &b1, "a.md", "one", 0);
     seed_block(&mut s, &b2, "b.md", "two", 0);
     make_due(&s, &b1);
-    set_prompt_on(&mut s, &b1, Some("RDB 的两种实现？")).unwrap();
+    // Existing databases may still contain the retired field; queues ignore it.
+    s.execute("UPDATE KnowledgeBlock SET recall_prompt = '旧回忆目标' WHERE block_id = ?1", [&b1]).unwrap();
     let q = review_queue_on(&s, None).unwrap();
     let item = q.items.iter().find(|i| i.block_id == b1).unwrap();
-    assert_eq!(item.recall_prompt.as_deref(), Some("RDB 的两种实现？"));
+    assert!(!item.has_rubric);
+    assert!(!serde_json::to_string(item).unwrap().contains("recallPrompt"));
     assert_eq!((item.start_offset, item.body_start_offset, item.end_offset), (0, 12, 200));
     // b2 未到期 → 不在 items，但 next_upcoming_at 指向它的 due
     assert!(!q.items.iter().any(|i| i.block_id == b2));
@@ -247,70 +248,8 @@ fn m6_app_config_whitelist_and_validation() {
 }
 
 // ---------------------------------------------------------------------------
-// 块提示：长度上限、令牌失效
+// 得分点：保存、队列状态与令牌失效
 // ---------------------------------------------------------------------------
-
-#[test]
-fn m6_set_prompt_updates_and_invalidates_session() {
-    let mut s = temp_db("prompt");
-    let mut tokens = ReviewTokens::default();
-    let b = new_id();
-    seed_block(&mut s, &b, "a.md", "x", 0);
-    make_due(&s, &b);
-    // 长度上限（200 字符，按字符计）
-    let long = "提".repeat(201);
-    assert_eq!(
-        set_prompt_on(&mut s, &b, Some(&long)).unwrap_err().code,
-        "REVIEW_REJECTED"
-    );
-    set_prompt_on(&mut s, &b, Some("两种持久化？")).unwrap();
-    // 提示=题面变化 → 进行中令牌失效
-    make_due(&s, &b);
-    let begin = review_begin_on(&s, &mut tokens, &b).unwrap();
-    set_prompt_on(&mut s, &b, Some("改过的提示")).unwrap();
-    let req = SubmitReviewRequest {
-        request_id: new_id(),
-        token: begin.token,
-        rating: 3,
-        now_ms: begin.now_ms,
-        change_resolution: None,
-        context_used: false,
-        duration_ms: None,
-        outcome: outcome_good_on_empty(begin.now_ms),
-    };
-    assert_eq!(
-        submit_review_on(&mut s, &mut tokens, &req).unwrap_err().code,
-        "REVIEW_TOKEN_STALE"
-    );
-    // 重新 begin 可评，清提示回 NULL
-    make_due(&s, &b);
-    let begin2 = review_begin_on(&s, &mut tokens, &b).unwrap();
-    let req2 = SubmitReviewRequest {
-        request_id: new_id(),
-        token: begin2.token,
-        rating: 3,
-        now_ms: begin2.now_ms,
-        change_resolution: None,
-        context_used: false,
-        duration_ms: None,
-        outcome: outcome_good_on_empty(begin2.now_ms),
-    };
-    submit_review_on(&mut s, &mut tokens, &req2).unwrap();
-    set_prompt_on(&mut s, &b, None).unwrap();
-    let prompt: Option<String> = s
-        .query_row(
-            "SELECT recall_prompt FROM KnowledgeBlock WHERE block_id = ?1",
-            rusqlite::params![b],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(prompt, None);
-    // 未知块拒绝
-    assert_eq!(
-        set_prompt_on(&mut s, &new_id(), Some("x")).unwrap_err().code,
-        "REVIEW_REJECTED"
-    );
-}
 
 #[test]
 fn note_rubrics_edit_before_due_without_consuming_learning_quota() {
@@ -375,8 +314,15 @@ fn jev_rubric_persists_without_leaking_into_queue_and_invalidates_tokens() {
     assert_eq!(jev_grade_context_on(&conn, &tokens, &before.token).unwrap_err().code, "REVIEW_TOKEN_STALE");
     let queue = serde_json::to_string(&review_queue_on(&conn, None).unwrap()).unwrap();
     assert!(!queue.contains("独立的秘密得分点"));
+    let item = review_queue_on(&conn, None).unwrap().items.remove(0);
+    assert!(item.has_rubric);
+    assert!(queue.contains("\"hasRubric\":true"));
+    // Historical recall goals must not override the section question sent to Jev.
+    conn.execute("UPDATE KnowledgeBlock SET recall_prompt = '旧回忆目标，不能作为题目' WHERE block_id = ?1", [&id]).unwrap();
     let fresh = review_begin_on(&conn, &mut tokens, &id).unwrap();
-    assert_eq!(jev_grade_context_on(&conn, &tokens, &fresh.token).unwrap().points.len(), 2);
+    let context = jev_grade_context_on(&conn, &tokens, &fresh.token).unwrap();
+    assert_eq!(context.points.len(), 2);
+    assert_eq!(context.prompt, item.title.unwrap());
     tokens.remove(&fresh.token);
     assert_eq!(jev_grade_context_on(&conn, &tokens, &fresh.token).unwrap_err().code, "REVIEW_TOKEN_INVALID");
 }
@@ -396,6 +342,7 @@ fn jev_invalid_rubric_does_not_overwrite_or_advance_state() {
         assert_eq!(jev_grade_context_on(&conn, &tokens, &begin.token).unwrap().points, vec!["原标准"]);
     }
     rubric::save_on(&mut conn, &id, &[]).unwrap();
+    assert!(!review_queue_on(&conn, None).unwrap().items[0].has_rubric);
     let fresh = review_begin_on(&conn, &mut tokens, &id).unwrap();
     assert_eq!(jev_grade_context_on(&conn, &tokens, &fresh.token).unwrap_err().code, "JEV_RUBRIC_MISSING");
 }
@@ -436,7 +383,7 @@ fn immediate_learning_keeps_original_schedule_until_first_rating() {
     assert_eq!(begin.state.state_revision, 0);
     assert_eq!(learning_queue_on(&s, None).unwrap().quota.used_today, 0);
 
-    set_prompt_on(&mut s, &b, Some("什么情况下需要回表？")).unwrap();
+    recallmd_lib::persistence::store::rubric::save_on(&mut s, &b, &["查询需要索引之外的列".into()]).unwrap();
     let make_request = |token: String, now: i64| SubmitReviewRequest {
         request_id: new_id(), token, rating: 3, now_ms: now,
         change_resolution: None, context_used: false, duration_ms: Some(1000),
@@ -445,7 +392,7 @@ fn immediate_learning_keeps_original_schedule_until_first_rating() {
     let stale = make_request(begin.token, begin.now_ms);
     assert_eq!(submit_review_on(&mut s, &mut tokens, &stale).unwrap_err().code, "REVIEW_TOKEN_STALE");
     let q = learning_queue_on(&s, None).unwrap();
-    assert_eq!(q.items[0].recall_prompt.as_deref(), Some("什么情况下需要回表？"));
+    assert!(q.items[0].has_rubric);
     assert_eq!(q.items[0].next_review_at, original_due);
 
     let begin = learning_begin_on(&s, &mut tokens, &b).unwrap();

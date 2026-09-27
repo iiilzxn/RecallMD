@@ -79,13 +79,11 @@ describe("新用户引导", () => {
     await render();
     await button("先跳过，稍后再设置");
     expect(controller.state.step).toBe("learn");
-    await render({ view: "review", review: { phase: "hidden", goalReady: false } });
-    expect(controller.state.step).toBe("goal");
-    await render({ review: { phase: "hidden", goalReady: true } });
+    await render({ view: "review", review: { phase: "hidden" } });
     expect(controller.state.step).toBe("reveal");
-    await render({ review: { phase: "revealed", goalReady: true } });
+    await render({ review: { phase: "revealed" } });
     expect(controller.state.step).toBe("rate");
-    await render({ review: { phase: "done", goalReady: false } });
+    await render({ review: { phase: "done" } });
     expect(controller.state.step).toBe("rate"); // Empty queue / skip is not a successful rating.
     await act(async () => controller.advance("rate"));
     expect(controller.state.step).toBe("done");
@@ -119,21 +117,24 @@ describe("新用户引导", () => {
   });
 
   it("取题尚未完成、题目重新隐藏时不会指向失效的评分按钮", () => {
-    const review: GuideContext = { ...empty, workspace: true, view: "review", review: { phase: "loading", goalReady: true } };
-    expect(observedStep("goal", review)).toBe("goal");
-    review.review = { phase: "hidden", goalReady: true };
+    const review: GuideContext = { ...empty, workspace: true, view: "review", review: { phase: "loading" } };
+    expect(observedStep("learn", review)).toBe("learn");
+    review.review = { phase: "hidden" };
     expect(visibleStep("rate", review)).toBe("reveal");
-    review.review = { phase: "hidden", goalReady: false };
-    expect(visibleStep("rate", review)).toBe("goal");
   });
 
   it("没有可学习内容时给出今日复习和结束入口", async () => {
-    writeGuide({ ...INITIAL_GUIDE, introSeen: true, status: "active", step: "goal" });
-    await render({ workspace: true, view: "review", review: { phase: "done", goalReady: false } });
+    writeGuide({ ...INITIAL_GUIDE, introSeen: true, status: "active", step: "reveal" });
+    await render({ workspace: true, view: "review", review: { phase: "done" } });
     expect(document.querySelector(".guide-coach")?.textContent).toContain("当前队列里没有内容");
     await button("先结束引导");
     expect(controller.state.status).toBe("complete");
     expect(document.querySelector(".guide-coach")).toBeNull();
+  });
+
+  it("旧引导停在回忆目标时，恢复为直接阅读题目", () => {
+    localStorage.setItem(ONBOARDING_KEY, JSON.stringify({ ...INITIAL_GUIDE, introSeen: true, status: "paused", step: "goal" }));
+    expect(readGuide()).toMatchObject({ step: "reveal", status: "paused" });
   });
 
   it("偏好损坏、旧版本或存储不可用不会阻止首次启动", () => {

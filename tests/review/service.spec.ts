@@ -178,7 +178,7 @@ describe("M5 ReviewService.submit", () => {
     expect(calls[0].requestId).toBe("reuse-me");
   });
 
-  it("stats/appConfig/setPrompt 透传到 ipc", async () => {
+  it("stats/appConfig 透传到 ipc", async () => {
     const seen: string[] = [];
     const ipc = {
       reviewBegin: async () => beginResult(),
@@ -207,16 +207,12 @@ describe("M5 ReviewService.submit", () => {
       appConfigSet: async (key: string, value: string) => {
         seen.push(`config-set:${key}=${value}`);
       },
-      reviewSetPrompt: async (id: string, prompt: string | null) => {
-        seen.push(`prompt:${id}=${prompt}`);
-      },
     };
     const service = new ReviewService({ ipc: ipc as never, clock: createFakeClock(T0) });
     await service.stats();
     await service.appConfig();
     await service.setAppConfig("editor.autosave", "0");
-    await service.setPrompt("b-0001", "两种持久化？");
-    expect(seen).toEqual(["stats", "config-read", "config-set:editor.autosave=0", "prompt:b-0001=两种持久化？"]);
+    expect(seen).toEqual(["stats", "config-read", "config-set:editor.autosave=0"]);
     // now() 走注入时钟（UI 计时纪律）
     expect(service.now()).toBe(T0);
   });

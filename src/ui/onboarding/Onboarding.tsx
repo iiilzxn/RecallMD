@@ -38,7 +38,7 @@ export function useOnboarding() {
 
 const CONCEPTS = [
   { eyebrow: "01 / 知识的起点", title: "你的笔记，就是知识库。", description: "选一个本地文件夹，放进 Markdown 笔记。熟悉的文字、代码和图表，都可以成为学习材料。", detail: "笔记以 .md 文件保存在本地，随时可以用其他编辑器打开。" },
-  { eyebrow: "02 / 从记录到学习", title: "一个小节，一个值得回忆的问题。", description: "用标题组织知识，在下面写清答案。点击「纳入复习」，有正文的小节就能参与学习。", detail: "学习时再为小节设置明确的题目目标，让每次回忆都有方向。" },
+  { eyebrow: "02 / 从记录到学习", title: "一个小节，一个值得回忆的问题。", description: "用标题组织知识，在下面写清答案。点击「纳入复习」，有正文的小节就能参与学习。", detail: "小节标题就是复习题目；把标题写成明确的问题，让每次回忆都有方向。" },
   { eyebrow: "03 / 给答案一个标准", title: "学的时候，留下得分点。", description: "在阅读视图中，点小节标题旁的「＋」，记录回答必须包含的要点。可以添加多个，也能随时修改。", detail: "标签超过 5 个字会省略，悬浮可看全文。Jev 打分是可选项，在设置中开启并填写 API Key；也可以一直手动复习。" },
   { eyebrow: "04 / 让理解留下来", title: "先回忆，再翻开答案。", description: "先用「学习新内容」理解笔记。以后到「今日复习」尝试回忆，核对原文，再如实选择回忆表现。", detail: "软件据此安排下一次复习。忘记也没关系，选择「没回忆起来」，再学一次。" },
 ] as const;
@@ -90,7 +90,7 @@ function Intro({ guide }: { guide: ReturnType<typeof useOnboarding> }) {
 type Rect = { left: number; top: number; width: number; height: number };
 const TARGETS: Record<TourStep, string | null> = {
   workspace: "workspace", note: "new-file", include: "include", preview: "preview", points: "point-add",
-  learn: "learn", goal: "goal", reveal: "reveal", rate: "rate", done: null,
+  learn: "learn", reveal: "reveal", rate: "rate", done: null,
 };
 
 /** Non-modal coach: only the card receives pointer events, the real app stays usable. */
@@ -154,7 +154,7 @@ function Coach({ target, children, label }: { target: string | null; children: R
 
 const TITLES: Record<TourStep, string> = {
   workspace: "选一个知识库文件夹", note: "打开你的第一篇笔记", include: "让一个小节加入复习", preview: "切到阅读视图", points: "在标题旁，添一个得分点",
-  learn: "开始学习新内容", goal: "给这一题一个清晰的目标", reveal: "阅读、理解，再对照", rate: "如实选择回忆表现", done: "第一次练习，完成了。",
+  learn: "开始学习新内容", reveal: "阅读、理解，再对照", rate: "如实选择回忆表现", done: "第一次练习，完成了。",
 };
 const DESCRIPTIONS: Record<TourStep, string> = {
   workspace: "点击「选择知识库文件夹」，也可以打开最近使用的知识库。新建一个空文件夹，就能从零开始。",
@@ -162,8 +162,7 @@ const DESCRIPTIONS: Record<TourStep, string> = {
   include: "用 Markdown 标题写问题，在下面写答案，然后点「纳入复习」。软件会保存笔记，并把有正文的小节加入复习。只有空标题时还不能复习。",
   preview: "点击工具栏的「阅读」，看看 Markdown 渲染后的样子。下一步，我们直接在小节标题旁标记答案要点。",
   points: "点击小节标题旁的「＋」，写下一个回答必须包含的要点并保存。可以添加多个；标签悬浮能看全文，点击能编辑。这一步可以跳过。",
-  learn: "点击左侧「学习新内容」，为尚未学过的小节设置题目目标。已有学习记录的内容，可以到「今日复习」查看。",
-  goal: "题目目标是复习时看到的问题，例如「栈遵循什么出栈顺序？」。输入后点「保存目标」，也可以用小节标题填写。得分点是答案标准，两者各有用途。",
+  learn: "点击左侧「学习新内容」，直接阅读题目和原文。小节标题就是题目；已有学习记录的内容，可以到「今日复习」查看。",
   reveal: "首次学习先阅读原文、理解内容。以后复习时，先试着回忆，再显示原文核对；忘记的部分也是下一次学习的线索。",
   rate: "核对后按实际表现选择一档，软件会安排下次复习。没想起来选第一档，正确但费力选第二档；第三、四档分别表示正常、轻松完整的回忆。初次阅读不等于已经记住。",
   done: "你已经走过了笔记、学习和评价的流程。之后按「今日复习」的安排回来，让知识慢慢留在记忆里。",
@@ -185,13 +184,13 @@ export function Onboarding({ guide, context, onNewFile, onFillExample, onNavigat
   if (state.status !== "active") return null;
   const step = visibleStep(state.step, context);
   const needsEditor = ["note", "include", "preview", "points"].includes(step) && context.view !== "editor";
-  const needsReview = ["goal", "reveal", "rate"].includes(step) && context.view !== "review";
-  const queueEmpty = ["goal", "reveal", "rate"].includes(step) && context.view === "review" && context.review?.phase === "done";
+  const needsReview = ["reveal", "rate"].includes(step) && context.view !== "review";
+  const queueEmpty = ["reveal", "rate"].includes(step) && context.view === "review" && context.review?.phase === "done";
   const target = needsEditor ? "notes" : needsReview ? "learn" : queueEmpty ? "review-nav" : TARGETS[step];
-  const progress = Math.min(TOUR_STEPS.indexOf(state.step) + 1, 9);
+  const progress = Math.min(TOUR_STEPS.indexOf(state.step) + 1, TOUR_STEPS.length - 1);
   return <Coach target={target} label="新手操作引导">
-    <div className="guide-coach-top"><span><Icon name="book" size={15} />上手指南 · {step === "done" ? "已完成" : `${progress} / 9`}</span><button type="button" className="tree-act" aria-label="暂停操作引导" onClick={guide.pause}><Icon name="close" size={15} /></button></div>
-    <div className="guide-step-track" aria-hidden="true">{TOUR_STEPS.slice(0, 9).map((s, i) => <i key={s} className={i < progress ? "filled" : ""} />)}</div>
+    <div className="guide-coach-top"><span><Icon name="book" size={15} />上手指南 · {step === "done" ? "已完成" : `${progress} / ${TOUR_STEPS.length - 1}`}</span><button type="button" className="tree-act" aria-label="暂停操作引导" onClick={guide.pause}><Icon name="close" size={15} /></button></div>
+    <div className="guide-step-track" aria-hidden="true">{TOUR_STEPS.slice(0, -1).map((s, i) => <i key={s} className={i < progress ? "filled" : ""} />)}</div>
     <div aria-live="polite" aria-atomic="true"><h3 id={headingId}>{queueEmpty ? "当前队列里没有内容" : TITLES[step]}</h3><p>{queueEmpty ? "可能还未纳入内容、内容已学过，或今天的新内容配额已用完。可以看看「今日复习」，也可以先结束引导，之后再从设置中打开。" : DESCRIPTIONS[step]}</p></div>
     {step === "include" && !needsEditor && <>
       <pre className="guide-note-example">{"## 栈遵循什么出栈顺序？\n\n后进先出，最后放入的先取出。"}</pre>

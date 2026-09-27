@@ -485,16 +485,6 @@ fn app_config_set(key: String, value: String) -> HostResult<()> {
     }
 }
 
-#[tauri::command]
-fn review_set_prompt(block_id: String, prompt: Option<String>) -> HostResult<()> {
-    match crate::persistence::workspace::active_store()?
-        .call(crate::persistence::store::DbAction::ReviewSetPrompt { block_id, prompt })?
-    {
-        crate::persistence::store::DbReply::Ack => Ok(()),
-        _ => unreachable!("ReviewSetPrompt 应答"),
-    }
-}
-
 /// M7：编辑器冲突进入/解除时标记文档索引状态（CONFLICT 挡评，§13.4 L901）
 #[tauri::command]
 fn mark_doc_status(relative: String, status: String) -> HostResult<u64> {
@@ -693,7 +683,6 @@ pub fn run() {
             note_rubrics_read,
             note_rubric_save,
             jev_grade,
-            review_set_prompt,
             mark_doc_status,
             audit_quick,
             audit_hash_batch

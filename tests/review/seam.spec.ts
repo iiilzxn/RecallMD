@@ -126,6 +126,10 @@ describe("M5 线上 DTO 键形（Rust→TS 应答；镜像 review.rs Serialize �
       "nextReviewAt",
       "needsRecheck",
       "neverRated",
+      "hasRubric",
+      "startOffset",
+      "bodyStartOffset",
+      "endOffset",
     ];
     const countKeys: (keyof QueueCountsDto)[] = ["learning", "review", "newTotal"];
     const quotaKeys: (keyof QuotaInfoDto)[] = ["limit", "usedToday", "remaining"];
@@ -135,7 +139,7 @@ describe("M5 线上 DTO 键形（Rust→TS 应答；镜像 review.rs Serialize �
     expect(beginKeys).toHaveLength(3);
     expect(submitKeys).toHaveLength(6);
     expect(queueKeys).toHaveLength(4);
-    expect(itemKeys).toHaveLength(8);
+    expect(itemKeys).toHaveLength(12);
     expect(countKeys).toHaveLength(3);
     expect(quotaKeys).toHaveLength(3);
     expect(resetKeys).toHaveLength(3);

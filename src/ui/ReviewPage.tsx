@@ -78,8 +78,6 @@ export function ReviewPage({ service, learnNow = false, onSwitchMode, onExit, on
   const [error, setError] = useState<HostErrorShape | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [promptDraft, setPromptDraft] = useState("");
-  const [editingGoal, setEditingGoal] = useState(false);
   const [ratedCount, setRatedCount] = useState(0);
   const [excludeConfirm, setExcludeConfirm] = useState(false);
   const [jevConfig, setJevConfig] = useState<JevConfig | null>(null);
@@ -101,13 +99,12 @@ export function ReviewPage({ service, learnNow = false, onSwitchMode, onExit, on
   const skippedRef = useRef<Set<string>>(new Set());
 
   const currentItem = session[index] ?? null;
-  const savedGoal = currentItem?.recallPrompt?.trim() || (!learnNow ? currentItem?.title?.trim() || "回忆这一小节的核心内容" : "");
-  const goalReady = savedGoal.length > 0 && !editingGoal;
-  const jevReady = !learnNow && !!jevConfig?.enabled && jevConfig.hasApiKey;
+  const question = currentItem?.title?.trim() || "回忆这篇笔记的前言内容";
+  const jevReady = !learnNow && !!jevConfig?.enabled && jevConfig.hasApiKey && !!currentItem?.hasRubric;
   const navigationLocked = busy || speechBusy;
   const needsRecheck = beginRef.current?.state.needsRecheck ?? currentItem?.needsRecheck ?? false;
 
-  useEffect(() => { onGuideStateChange?.({ phase, goalReady }); }, [phase, goalReady, onGuideStateChange]);
+  useEffect(() => { onGuideStateChange?.({ phase }); }, [phase, onGuideStateChange]);
   useEffect(() => () => onGuideStateChange?.(null), [onGuideStateChange]);
 
   useEffect(() => {
@@ -167,8 +164,6 @@ export function ReviewPage({ service, learnNow = false, onSwitchMode, onExit, on
       setResolution(null);
       setPreview([]);
       requestIdRef.current = null;
-      setPromptDraft(item.recallPrompt ?? "");
-      setEditingGoal(learnNow && !item.recallPrompt?.trim());
       try {
         beginRef.current = await service.begin(item.blockId, learnNow);
         startedAtRef.current = service.now();
@@ -256,7 +251,7 @@ export function ReviewPage({ service, learnNow = false, onSwitchMode, onExit, on
     async (withContext: boolean) => {
       const item = currentItem;
       const begin = beginRef.current;
-      if (!item || !begin || phase !== "hidden" || busy || speechBusyRef.current || !goalReady) return;
+      if (!item || !begin || phase !== "hidden" || busy || speechBusyRef.current) return;
       setBusy(true);
       setError(null);
       try {
@@ -280,7 +275,7 @@ export function ReviewPage({ service, learnNow = false, onSwitchMode, onExit, on
         setBusy(false);
       }
     },
-    [currentItem, phase, busy, speechBusy, goalReady, service, jevReady, answerDraft, gradeAnswer],
+    [currentItem, phase, busy, speechBusy, service, jevReady, answerDraft, gradeAnswer],
   );
 
   const rate = useCallback(
@@ -361,34 +356,6 @@ export function ReviewPage({ service, learnNow = false, onSwitchMode, onExit, on
     [currentItem, navigationLocked, phase, service, advance, index, flashInfo, onDueChanged],
   );
 
-  const savePrompt = useCallback(async () => {
-    const item = currentItem;
-    if (!item || busy || phase === "loading") return;
-    const trimmed = promptDraft.trim();
-    if (!trimmed) {
-      flashInfo("请写下一个明确的问题或回忆目标");
-      return;
-    }
-    if (trimmed === (item.recallPrompt ?? "")) {
-      setEditingGoal(false);
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await service.setPrompt(item.blockId, trimmed);
-      const updated = session.map((entry) => entry.blockId === item.blockId ? { ...entry, recallPrompt: trimmed } : entry);
-      setSession(updated);
-      flashInfo("目标已保存，请围绕这个问题回忆");
-      // 保存后的队列副本也必须更新，避免重新取题时又恢复成旧题面。
-      await loadCurrent(updated, index);
-    } catch (e) {
-      setError(e as HostErrorShape);
-    } finally {
-      setBusy(false);
-    }
-  }, [currentItem, busy, phase, promptDraft, service, session, index, loadCurrent, flashInfo]);
-
   // 键盘：Space 揭示 / 1–4 评分 / Esc 返回；输入框与 IME 组合中不触发（§16）
   const keyState = useRef({ phase, resolution, needsRecheck, rate, reveal, onExit, navigationLocked });
   keyState.current = { phase, resolution, needsRecheck, rate, reveal, onExit, navigationLocked };
@@ -435,7 +402,7 @@ export function ReviewPage({ service, learnNow = false, onSwitchMode, onExit, on
   const breadcrumb = currentItem
     ? [
         currentItem.relativePath.replace(/\/[^/]*$/, ""),
-        ...currentItem.headingPath,
+        ...currentItem.headingPath.slice(0, -1),
       ].filter(Boolean)
     : [];
 
@@ -550,52 +517,13 @@ export function ReviewPage({ service, learnNow = false, onSwitchMode, onExit, on
           </div>
           <div className="review-breadcrumb"><Icon name="file" size={13} />{breadcrumb.join(" / ") || "知识库"}</div>
           <h2 className="review-title">
-            {savedGoal || "先明确这一题要回答什么"}
+            {question}
           </h2>
           <div className="review-meta">
             <span>{({ NEW: "新内容", LEARNING: "学习中", REVIEW: "复习中", RELEARNING: "重新学习中" } as Record<string, string>)[currentItem.phase.toUpperCase()] ?? currentItem.phase}</span>
             {currentItem.neverRated && <span className="tag-new">首次评分</span>}
             {needsRecheck && <span className="tag-changed">正文已变更</span>}
           </div>
-
-          {editingGoal ? (
-            <div className="review-goal-editor" data-guide="goal">
-              <p className="hint">原文小节：{currentItem.title ?? `${currentItem.relativePath} · 前言`}</p>
-              <p className="hint" id="goal-help">一个目标只考一个知识点。例如「什么情况下需要回表？」。答案应能独立判断对错，不必逐字背诵。</p>
-              <div className="review-prompt-row">
-                <label className="review-prompt-label" htmlFor="recall-prompt">题目目标</label>
-                <input
-                  id="recall-prompt"
-                  className="review-prompt-input"
-                  value={promptDraft}
-                  placeholder="例如：什么情况下需要回表？"
-                  aria-describedby="goal-help"
-                  disabled={busy || phase === "loading"}
-                  maxLength={200}
-                  onChange={(e) => setPromptDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.nativeEvent.isComposing) void savePrompt();
-                    e.stopPropagation();
-                  }}
-                />
-                <button type="button" className="btn small primary" onClick={() => void savePrompt()} disabled={busy || phase === "loading" || !promptDraft.trim()}>
-                  保存目标
-                </button>
-                {savedGoal && <button type="button" className="btn small" disabled={busy} onClick={() => { setPromptDraft(savedGoal); setEditingGoal(false); }}>取消</button>}
-              </div>
-              {currentItem.title && <button type="button" className="text-button" disabled={busy || phase === "loading"} onClick={() => setPromptDraft(currentItem.title!.slice(0, 200))}>用小节标题填写目标</button>}
-              <p className="hint">一个小节包含多个问题？返回编辑，用独立的 Markdown 标题拆成多个小节，再纳入复习。</p>
-            </div>
-          ) : (
-            learnNow && <button type="button" className="text-button" disabled={navigationLocked || phase === "loading"} onClick={() => {
-              resetGrading();
-              setEditingGoal(true);
-              setPhase("hidden");
-              setBodyText(null);
-              setContextRaw(null);
-              setPreview([]);
-            }}>修改题目目标</button>
-          )}
 
           {needsRecheck && (
             <div className="review-recheck">
@@ -623,7 +551,7 @@ export function ReviewPage({ service, learnNow = false, onSwitchMode, onExit, on
 
           {phase === "hidden" && (
             <>
-              {!learnNow && goalReady ? <div className="jev-answer-entry">
+              {!learnNow ? <div className="jev-answer-entry">
                 <SpeechInput key={currentItem.blockId} config={speech.config} disabled={busy || speech.saving}
                   onBusyChange={onSpeechBusy} onOpenSettings={onSpeechSettings}
                   onTranscript={(result) => setAnswerDraft((text) => appendTranscript(text, result.text))} />
@@ -634,15 +562,16 @@ export function ReviewPage({ service, learnNow = false, onSwitchMode, onExit, on
                   value={answerDraft} aria-describedby="jev-answer-help" placeholder="写下你记得的内容，不必逐字背诵…" onChange={(e) => setAnswerDraft(e.target.value)} />
               </div> : <div className="review-hidden">
                 <span className="recall-symbol" aria-hidden="true"><Icon name={learnNow ? "book" : "review"} size={27} /></span>
-                <strong>{goalReady ? learnNow ? "从理解开始" : "先在脑海里，组织一次答案。" : "一个清晰的问题，是学习的起点。"}</strong>
-                <p>{goalReady ? learnNow ? "阅读原文，理解这一题的核心内容。" : "不必急着翻开原文，试着用自己的话说出来。" : "保存题目目标后，开始学习。"}</p>
+                <strong>从理解开始</strong>
+                <p>阅读原文，理解这一题的核心内容。</p>
               </div>}
-              {!learnNow && jevConfig?.enabled && !jevConfig.hasApiKey && <p className="hint">Jev 已开启，请在设置中保存 API Key。本次可先手动复习。</p>}
+              {!learnNow && !currentItem.hasRubric && <p className="hint">本题未设置得分点，仅对照原文；在笔记阅读视图中点击题目旁的「＋」添加后，Jev 才会评分。</p>}
+              {!learnNow && currentItem.hasRubric && jevConfig?.enabled && !jevConfig.hasApiKey && <p className="hint">Jev 已开启，请在设置中保存 API Key。本次可先手动复习。</p>}
               <div className="review-actions reveal-actions" data-guide="reveal">
                 <button
                   type="button"
                   className="btn primary"
-                  disabled={navigationLocked || !goalReady}
+                  disabled={navigationLocked}
                   onClick={() => void reveal(false)}
                 >
                   {learnNow ? "阅读原文" : jevReady && answerDraft.trim() ? "提交答案并评分" : jevReady ? "显示原文（不打分）" : "显示原文"} (Space)
@@ -650,7 +579,7 @@ export function ReviewPage({ service, learnNow = false, onSwitchMode, onExit, on
                 <button
                   type="button"
                   className="btn"
-                  disabled={navigationLocked || !goalReady}
+                  disabled={navigationLocked}
                   onClick={() => void reveal(true)}
                   title="查看标题与原文所在段落；视作已揭示并记录使用上下文"
                 >

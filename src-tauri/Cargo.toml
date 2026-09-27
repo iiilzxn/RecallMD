@@ -1,6 +1,6 @@
 [package]
 name = "recallmd"
-version = "0.3.0"
+version = "0.3.1"
 description = "RecallMD — 本地 Markdown 编辑器与主动回忆复习"
 edition = "2021"
 rust-version = "1.98.1"

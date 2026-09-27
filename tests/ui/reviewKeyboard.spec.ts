@@ -17,7 +17,7 @@ let submit: ReturnType<typeof vi.fn>;
 let onRated: ReturnType<typeof vi.fn<() => void>>;
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  const item = { blockId: "one", relativePath: "note.md", headingPath: [], title: "测试题", phase: "REVIEW", neverRated: false, needsRecheck: false, recallPrompt: "测试题", startOffset: 0, bodyStartOffset: 0, endOffset: 4 };
+  const item = { blockId: "one", relativePath: "note.md", headingPath: [], title: "测试题", phase: "REVIEW", neverRated: false, needsRecheck: false, hasRubric: true, startOffset: 0, bodyStartOffset: 0, endOffset: 4 };
   submit = vi.fn().mockResolvedValue({ quota: { limit: 20, usedToday: 1, remaining: 19 } });
   onRated = vi.fn();
   const service = {

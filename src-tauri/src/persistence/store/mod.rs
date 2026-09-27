@@ -134,11 +134,6 @@ pub enum DbAction {
     AppConfigRead,
     /// M6：应用配置写（白名单键：review.daily_new_limit / editor.autosave）
     AppConfigSet { key: String, value: String },
-    /// M6：块回忆提示（§5.2）
-    ReviewSetPrompt {
-        block_id: String,
-        prompt: Option<String>,
-    },
     RubricRead { block_id: String },
     RubricSave { token: String, points: Vec<String> },
     NoteRubricsRead { relative_path: String, expected_hash: String },
@@ -176,7 +171,6 @@ impl DbAction {
             | DbAction::ReviewStats
             | DbAction::AppConfigRead
             | DbAction::AppConfigSet { .. }
-            | DbAction::ReviewSetPrompt { .. }
             | DbAction::RubricRead { .. }
             | DbAction::RubricSave { .. }
             | DbAction::NoteRubricsRead { .. }
@@ -728,10 +722,6 @@ fn dispatch(conn: &mut Connection, tokens: &mut ReviewTokens, action: DbAction) 
         }
         DbAction::AppConfigSet { key, value } => {
             review::app_config_set_on(conn, &key, &value)?;
-            Ok(DbReply::Ack)
-        }
-        DbAction::ReviewSetPrompt { block_id, prompt } => {
-            review::set_prompt_on(conn, &block_id, prompt.as_deref())?;
             Ok(DbReply::Ack)
         }
         DbAction::RubricRead { block_id } => Ok(DbReply::Rubric(rubric::read_on(conn, &block_id)?)),

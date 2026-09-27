@@ -95,9 +95,6 @@ export class ReviewService {
     return this.deps.ipc.appConfigSet(key, value);
   }
 
-  setPrompt(blockId: string, prompt: string | null): Promise<void> {
-    return this.deps.ipc.reviewSetPrompt(blockId, prompt);
-  }
 
   /** 四间隔预览（§10.4：仅展示；提交时另取新 now 重算） */
   previewIntervals(begin: ReviewBeginResultDto, nowMs?: number): PreviewItem[] {
