@@ -1,12 +1,42 @@
+# 前端依赖与构建产物（保留 pnpm-lock.yaml）
 node_modules/
 dist/
+coverage/
+*.tsbuildinfo
+
+# 本机配置、实验数据与密钥（可提交不含密钥的示例配置）
 *.local
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+
+# 应用知识库元数据、日志与临时文件
+.recallmd/
+*.log
+*.tmp
+*.swp
+*.swo
 
 # Tauri / Rust
 src-tauri/target/
 src-tauri/gen/schemas/
 src-tauri/resources/speech-runtime/
-scripts/asr/__pycache__/
+
+# Python 工具缓存与虚拟环境
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 本地模型与打包二进制（通过准备脚本生成，不纳入源码）
+*.onnx
+*.exe
+*.msi
+*.dll
+*.pdb
 
 # 编辑器与系统
 .vscode/
